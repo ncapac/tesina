@@ -155,8 +155,149 @@ Running date: 2026-03-26
 - [ ] Update README / project description: data is **hourly (24 steps/day)** not 15-min/96-step
 - [ ] Decide definitively whether to include the 22 high-consumption outlier meters in training or exclude them
 - [ ] Add a `units` note to `loader.py` docstring (values appear to be in Wh or average W; min=0, max=764,000)
-- [ ] Consider adding temperature/meteorological conditioning (mentioned in plan.txt) as future work if not feasible now
 - [x] Fix `metrics.py`: `acf_compare` nlags safeguard, `envelope_plot` steps_per_hour, `discriminative_score` class balance
 - [ ] Run `04_evaluation.ipynb` once background training completes (checkpoints/best_model.pkl)  
       Training status: step 2336/23375, loss 0.9218 (both CPU procs competing; ETA several hours)
 - [ ] For thesis-quality results: re-train on GPU (~200 epochs); expected discriminative acc ≤ 0.55
+
+---
+
+## ⚠ MAJOR GAP — Comparative Study & Conditioning (added 2026-03-26)
+
+### Problem statement
+
+The project scope (see `biblio/initial_docs/plan.txt` and `todo.txt`) explicitly requires:
+
+1. **"Compare different time series generative tools"** — flow matching, rectified flows, etc.
+2. **"Conditional to metadata and exogenous inputs (e.g. external temperature)"**
+3. **"Compare … in terms of generative expressivity while respecting in-sample time series characteristics"**
+
+Currently the codebase implements **only DDPM/DDIM with a Transformer backbone**. There is no alternative generative method, no comparison framework, and only minimal conditioning (cluster_id + weekday/weekend binary). This is the single biggest missing piece in the thesis.
+
+---
+
+### PLAN — Phase A: Richer conditioning on the existing DDPM model
+
+The current conditioning vector `c = [cluster_id, day_type]` is thin. Day-type is almost useless (only 1.4% difference weekday vs weekend). Before adding new models, make the existing one properly conditioned.
+
+**A1. Expand the conditioning vector** `c = [cluster_id, day_type, month, day_of_week]`
+
+- [ ] `dataset.py` → `make_windows()`: extract `month` (0–11) and `day_of_week` (0–6) from the DatetimeIndex and append to `cs`
+- [ ] `transformer1d.py` → add `month_emb: eqx.nn.Embedding(12, d)` and `dow_emb: eqx.nn.Embedding(7, d)`, merge into the conditioning projection
+- [ ] `diffusion.py` → CFG null token becomes `[-1, -1, -1, -1]`
+- [ ] `train.py` → `train_step` already broadcasts null mask; just verify shapes
+- [ ] Update notebook 03 to pass the wider `c` vector
+- [ ] Re-run training (quick sanity) and confirm loss drops faster with richer conditioning
+
+**A2. Temperature / exogenous conditioning — DEFERRED**
+
+Temperature data will arrive later with a different dataset. For now, document as future work.
+When the data arrives, the architecture is ready to accept it:
+- Add a continuous conditioning channel (temperature → small MLP → merge with discrete embeddings)
+- This is an extension, not a blocker for the current comparative study
+
+---
+
+### PLAN — Phase B: Alternative generative method(s)
+
+The plan.txt+todo.txt explicitly list **flow matching** and **rectified flows** as alternatives to explore. We need at least **one alternative method** trained on the same data with the same conditioning and evaluated on the same metrics to make a meaningful comparison. With a **2-month timeline** and **cloud GPU** (uploaded git repo), we target **Rectified Flow as the primary alternative** and **TimeGAN as a stretch goal** if time permits.
+
+**Candidate methods** (all implementable in JAX/Equinox, reusing the same Transformer backbone):
+
+| # | Method | Key idea | Implementation effort | Notes |
+|---|--------|----------|----------------------|-------|
+| 1 | **Rectified Flow (RF)** | ODE-based, linear interpolation `x_t = (1-t)·x_0 + t·ε`, velocity prediction `v_θ(x_t, t, c)` | **Low** — same backbone, replace noise schedule with linear path, replace `p_losses` with velocity MSE, replace sampler with Euler ODE solver | **Primary alternative.** Liu et al. 2023. Clean, modern, directly comparable to DDPM. |
+| 2 | **Conditional Flow Matching (CFM)** | Generalisation of RF with optimal-transport paths | **Low-Medium** — same as RF but with OT-conditioned paths; can start with simple RF and optionally add OT mini-batch coupling | Lipman et al. 2023. Practically a superset of RF. Could be a variant within the RF notebook. |
+| 3 | **TimeGAN-style GAN** | Adversarial + supervised + reconstruction losses | **Medium** — needs discriminator + different training loop, but useful as non-diffusion baseline | Yoon et al. 2019. **Stretch goal** — only if Phase B1 + C are done with time to spare. |
+
+**Decision**: Implement **Rectified Flow** (B1). Decide on TimeGAN (B2) after B1+C are working.
+
+**B1. Implement Rectified Flow**
+
+- [ ] `src/models/rectified_flow.py` — new `RectifiedFlowProcess` class:
+  - Linear interpolation forward: `x_t = (1-t)·x_0 + t·ε` for `t ∈ [0,1]`
+  - Loss: `MSE(v_θ(x_t, t, c), ε - x_0)` (velocity matching)
+  - Sampler: Euler ODE solver, N steps (e.g. 50–100)
+  - CFG: same formula as DDPM — `v_guided = (1+s)·v_cond - s·v_uncond`
+- [ ] **Reuse the existing `DiffusionTransformer1D` backbone** — the denoiser architecture is agnostic to the noise process. Only `__call__` signature needs `t` to be continuous [0,1] instead of discrete [0,T]. Add a flag or normalise `t` internally.
+- [ ] `src/training/train_rf.py` — training step for RF (same structure as `train.py`, different loss)
+- [ ] Notebook `03b_rectified_flow_training.ipynb` — parallel to 03, same data pipeline
+
+**B2. (Stretch goal) Implement TimeGAN baseline**
+
+Only pursue after B1 + Phase C are complete and working. Decision point: ~4 weeks before submission.
+
+- [ ] `src/models/timegan.py` — encoder, recovery, generator, discriminator (small RNNs or 1D-conv)
+- [ ] `src/training/train_gan.py` — adversarial training loop
+- [ ] Notebook `03c_timegan_training.ipynb`
+
+---
+
+### PLAN — Phase C: Comparison framework & evaluation
+
+Currently `04_evaluation.ipynb` is wired to a single model. We need a unified comparison.
+
+**C1. Standardise the evaluation interface**
+
+- [ ] `src/evaluation/metrics.py` → add `compare_models(models_dict, real_data, conditions, ...)` that:
+  - Takes a dict of `{model_name: sample_generator_fn}`
+  - Generates N samples per (cluster, day_type) for each model
+  - Runs all metrics (ACF L2, CRPS, discriminative score, marginal KDE, envelope)
+  - Returns a summary DataFrame and composite figure
+- [ ] Add a **context-FID** or **marginal Wasserstein distance** metric (common in time-series generation literature) for an additional comparison axis
+
+**C2. Notebook `05_comparison.ipynb`** — the core comparative analysis
+
+- [ ] Load best checkpoints for DDPM and RF (and TimeGAN if available)
+- [ ] Generate matched sample sets (same conditions, same sample count)
+- [ ] Side-by-side metric table: rows = metrics, columns = models
+- [ ] Per-cluster comparison plots
+- [ ] Statistical significance: bootstrap confidence intervals on metrics
+- [ ] Ablation: effect of conditioning features (cluster only vs cluster+day_type vs cluster+day_type+month+dow)
+- [ ] Ablation: guidance scale sweep (s = 0, 0.5, 1.0, 1.5, 2.0, 3.0)
+
+**C3. Thesis figures & tables**
+
+- [ ] Summary table of all models × all metrics × all clusters
+- [ ] Training convergence comparison (loss curves overlaid)
+- [ ] Sample quality gallery: grid of real vs DDPM vs RF (vs TimeGAN) for each cluster
+- [ ] Wall-clock training time comparison
+
+---
+
+### PLAN — Phase D: Documentation & write-up support
+
+All comparison results will be in a **single thesis chapter** (not per-method chapters).
+
+- [ ] Update `README.md` to reflect the comparative scope, list all models
+- [ ] Thesis structure: single "Results & Comparison" chapter with subsections per metric
+- [ ] Method descriptions: DDPM (current), Rectified Flow — theory + implementation differences
+- [ ] Related work section: position these methods in the generative time-series literature
+- [ ] Discussion: why RF may outperform/underperform DDPM on this specific dataset (small L=24, discrete conditioning, moderate dataset size)
+- [ ] Future work: temperature conditioning (data arriving later), TimeGAN if not completed, continuous-time extensions
+
+---
+
+### Decisions log (2026-03-26)
+
+| Question | Answer |
+|----------|--------|
+| Number of alternative methods | TBD — at least RF; TimeGAN only if time permits |
+| Temperature data | Deferred — will arrive later with different data |
+| GPU access | Cloud GPU (git repo uploaded online) |
+| Timeline | ~2 months to submission |
+| Conditioning depth | `[cluster, day_type, month, dow]` sufficient for now |
+| Thesis chapter structure | Single comparison chapter |
+
+### Rough timeline (8 weeks)
+
+| Week | Phase | Milestone |
+|------|-------|-----------|
+| 1 | A1 | Expanded conditioning implemented & tested |
+| 2 | A1 | DDPM retrained with new conditioning (cloud GPU) |
+| 3 | B1 | Rectified Flow process + training loop implemented |
+| 4 | B1 | RF trained on cloud GPU, quick evaluation |
+| 5 | C1–C2 | Comparison framework + notebook 05 |
+| 6 | C2–C3 | Ablations, figures, tables |
+| 7 | D | Thesis writing, discussion, future work |
+| 8 | D | Buffer / polish / B2 stretch goal |
