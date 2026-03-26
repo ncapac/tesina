@@ -122,7 +122,7 @@ def train_val_split(
     val_mask = np.array([m in val_meters for m in mid], dtype=bool)
     tr_mask = ~val_mask
 
-    return (xs[tr_mask], cs[tr_mask]), (xs[val_mask], cs[val_mask])
+    return xs[tr_mask], cs[tr_mask], xs[val_mask], cs[val_mask]
 
 
 def numpy_dataloader(
