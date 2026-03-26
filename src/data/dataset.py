@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from typing import Optional, Tuple, Generator
+from typing import Optional, Tuple
 
 STEPS_PER_DAY = 24  # hourly resolution
 
@@ -125,27 +125,63 @@ def train_val_split(
     return xs[tr_mask], cs[tr_mask], xs[val_mask], cs[val_mask]
 
 
+class _InfiniteLoader:
+    """
+    Infinite iterator of (x_batch, c_batch) pairs. Reshuffles every pass.
+
+    Attributes
+    ----------
+    epoch_len : int
+        Number of complete batches per pass, used by ``Trainer.fit`` to bound
+        one training epoch to a single pass through the data.
+    """
+
+    def __init__(
+        self,
+        xs: np.ndarray,
+        cs: np.ndarray,
+        batch_size: int,
+        shuffle: bool,
+        rng: np.random.Generator,
+    ):
+        n = len(xs)
+        self.epoch_len: int = max(1, n // batch_size)
+        self._gen = self._make_gen(xs, cs, batch_size, shuffle, rng)
+
+    @staticmethod
+    def _make_gen(xs, cs, batch_size, shuffle, rng):
+        n = len(xs)
+        idx = np.arange(n)
+        while True:
+            if shuffle:
+                rng.shuffle(idx)
+            for start in range(0, n, batch_size):
+                b = idx[start : start + batch_size]
+                if len(b) < batch_size:
+                    break
+                yield xs[b], cs[b]
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._gen)
+
+
 def numpy_dataloader(
     xs: np.ndarray,
     cs: np.ndarray,
     batch_size: int,
     shuffle: bool = True,
     rng: int | np.random.Generator = 0,
-) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
+) -> "_InfiniteLoader":
     """
-    Infinite generator of (x_batch float32, c_batch int32) pairs.
-    Reshuffles every epoch.
+    Infinite iterator of (x_batch float32, c_batch int32) pairs.
+    Reshuffles every pass through the data.
+
+    The returned object exposes ``epoch_len = len(xs) // batch_size`` so that
+    ``Trainer.fit`` can automatically bound each epoch to one data pass.
     """
     if isinstance(rng, int):
         rng = np.random.default_rng(rng)
-    n = len(xs)
-    idx = np.arange(n)
-    while True:
-        if shuffle:
-            rng.shuffle(idx)
-        for start in range(0, n, batch_size):
-            b = idx[start : start + batch_size]
-            if len(b) < batch_size:
-                # drop last incomplete batch
-                break
-            yield xs[b], cs[b]
+    return _InfiniteLoader(xs, cs, batch_size, shuffle, rng)

@@ -47,10 +47,12 @@ def _acf(x: np.ndarray, nlags: int) -> np.ndarray:
 def acf_compare(
     real: np.ndarray,       # (N_real, L)
     synthetic: np.ndarray,  # (N_syn,  L)
-    nlags: int = 48,
+    nlags: int = 23,        # default: full 24-step window (0..23)
     ax: Optional[plt.Axes] = None,
     label: str = "",
 ) -> float:
+    # Clamp nlags to the actual sequence length to avoid empty-slice artifacts
+    nlags = min(nlags, real.shape[1] - 1)
     """
     Overlay mean ACF of real vs synthetic samples.
     Returns L2 distance between the two mean ACF vectors.
@@ -170,6 +172,8 @@ def discriminative_score(
     Returns test accuracy; ideal = 0.5 (indistinguishable distributions).
 
     Uses scikit-learn's MLPClassifier as a simple baseline discriminator.
+    The two classes are balanced by subsampling the majority class so that
+    the score is not dominated by class imbalance.
     """
     try:
         from sklearn.neural_network import MLPClassifier
@@ -178,8 +182,14 @@ def discriminative_score(
     except ImportError:
         raise ImportError("scikit-learn required for discriminative_score")
 
-    X = np.concatenate([real, synthetic], axis=0)
-    y = np.array([0] * len(real) + [1] * len(synthetic), dtype=int)
+    # Balance classes by subsampling the larger set
+    n_min = min(len(real), len(synthetic))
+    rng_bal = np.random.default_rng(seed)
+    real_sub = real[rng_bal.choice(len(real), n_min, replace=False)]
+    syn_sub  = synthetic[rng_bal.choice(len(synthetic), n_min, replace=False)]
+
+    X = np.concatenate([real_sub, syn_sub], axis=0)
+    y = np.array([0] * n_min + [1] * n_min, dtype=int)
 
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
@@ -208,7 +218,7 @@ def envelope_plot(
     synthetic: np.ndarray,  # (N_syn,  L)
     ax: Optional[plt.Axes] = None,
     label: str = "",
-    steps_per_hour: int = 4,
+    steps_per_hour: int = 1,   # hourly resolution (24-step windows)
 ) -> None:
     """
     Plot mean ± 1 std envelope for real and synthetic side by side.
@@ -254,7 +264,7 @@ def run_all_metrics(
     ax_env  = fig.add_subplot(gs[0, 1:])
     ax_kde  = [fig.add_subplot(gs[1, i]) for i in range(3)]
 
-    acf_dist = acf_compare(real, synthetic, nlags=48, ax=ax_acf, label=label)
+    acf_dist = acf_compare(real, synthetic, nlags=real.shape[1] - 1, ax=ax_acf, label=label)
     envelope_plot(real, synthetic, ax=ax_env, label=label)
     marginal_kde(real, synthetic, time_bins=3, ax=ax_kde, label=label)
 

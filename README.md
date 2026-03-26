@@ -1,6 +1,6 @@
 # SUPSI DAS Tesina — Diffusion Model for Energy Load Forecasting
 
-Master thesis project (tesina) for the SUPSI DAS Data Science programme.
+DAS thesis project for the SUPSI DAS 'Big Data Analytics e Machine Learning' programme.
 
 ## Goal
 
