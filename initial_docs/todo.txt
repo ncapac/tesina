@@ -1,0 +1,5 @@
+
+    Guardare i framework disponibili in python / jax per diffusion o flow matching o rectified flows per timeseries
+    Iniziare a lavorare con il file che ti ho inviato (dovrebbe esserti arrivato un link separato a questa mail, fammi sapere se riesci a scaricare i dati, download expires 04/04/2026). Sono dati da smart meters provenienti dal Portogallo. Sono dati orari (quelli a cui abbiamo accesso sono al quarto d’ora) su tre anni, 320 meters, già abbastanza puliti. Ti chiederei di fare due/tre clusters e iniziare a pensare di produrre dei profili condizionali a:
+        Classe del cluster
+        Giorno della settimana (o anche solo weekday vs weekend)

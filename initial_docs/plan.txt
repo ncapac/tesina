@@ -1,0 +1,18 @@
+In the context of safe electric grid operations, synthetic profile generation and forecasting is pivotal to assess operational risks. However, the electrical grid is only partially observable, as not all the points are measured, and when they are the time resolution is low (15 minutes). Additionally, synthetic energy consumption time series that take into account buildings destination of use, size and relevant metadata can be used to assess economic feasibility of energy communities or district level photovoltaic power plants. 
+
+
+Scope:
+
+In this work we will compare generative time series models to produce consumption data profiles, conditional to metadata and exogenous inputs (e.g. external temperature)
+
+
+Data:
+
+A private dataset with regularly sampled electric time series is available, along with meteorological conditions. Furthermore the profiles have been previously classified in relevant clusters: this information can be used as an additional conditioning metadata.
+
+
+Research questions:
+
+Compare different time series generative tools in terms of generative expressivity while respecting in-sample time series characteristics (e.g. autocorrelation profiles, noise to ratio signals, partial dependances).
+
+We will use diffusion based models with guidance and possibly explore alternative methods (e.g. flow matching, rectified flows, etc..)
