@@ -1,0 +1,31 @@
+{
+  "name": "Tesina ML (GPU)",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+
+  "hostRequirements": {
+    "gpu": "optional"
+  },
+
+  "features": {
+    "ghcr.io/devcontainers/features/nvidia-cuda:1": {
+      "cudaVersion": "12.4",
+      "installCudnn": true
+    }
+  },
+
+  "postCreateCommand": "pip install --upgrade pip && pip install -r requirements.txt && pip install pytest",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter",
+        "GitHub.copilot",
+        "GitHub.copilot-chat"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python"
+      }
+    }
+  }
+}
