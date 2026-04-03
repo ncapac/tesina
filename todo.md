@@ -1,6 +1,7 @@
 # Notebook Validation — Observations & TODO
 
-Running date: 2026-03-26
+Running date: 2026-03-26  
+Last updated: 2026-04-03
 
 ---
 
@@ -30,23 +31,23 @@ Running date: 2026-03-26
 ### Downstream implications for notebooks 02–04
 
 **→ Notebook 02 (Clustering)**
-- [ ] Use log-transformed values for K-Means or use StandardScaler on log1p(x) to avoid outliers dominating centroid placement
-- [ ] Explicitly check which cluster(s) the 22 outlier meters fall into — they should ideally form their own cluster(s)
-- [ ] Evaluate whether K=3 is sufficient or whether K=4–5 better separates outliers from bulk consumers
-- [ ] Print per-cluster sample count, mean, and std after clustering
-- [ ] Validate silhouette score / elbow curve
+- [x] Use log-transformed values for K-Means or use StandardScaler on log1p(x) to avoid outliers dominating centroid placement
+- [x] Explicitly check which cluster(s) the 22 outlier meters fall into — they should ideally form their own cluster(s)
+- [x] Evaluate whether K=3 is sufficient or whether K=4–5 better separates outliers from bulk consumers
+- [x] Print per-cluster sample count, mean, and std after clustering
+- [x] Validate silhouette score / elbow curve
 
 **→ Notebook 03 (Diffusion training)**
-- [ ] Confirm `STEPS_PER_DAY = 24` everywhere (matches data)
-- [ ] CFG `day_type` signal is weak — consider dropping or replacing with more informative features (e.g. month, season) if results don't separate
-- [ ] Verify that `compute_stats` / `normalize` in `loader.py` is called per-cluster to handle the 3-order-of-magnitude scale range
+- [x] Confirm `STEPS_PER_DAY = 24` everywhere (matches data)
+- [x] CFG `day_type` signal is weak — replaced with richer conditioning: `[cluster_id, day_type, month, dow]` (Phase A1)
+- [x] Verify that `compute_stats` / `normalize` in `loader.py` is called per-cluster to handle the 3-order-of-magnitude scale range
 - [ ] Monitor training loss split by cluster to detect if large-scale clusters are harder to learn
 
 **→ Notebook 04 (Evaluation)**
-- [ ] When reporting metrics (CRPS, discriminative score), report them split by cluster
+- [x] When reporting metrics (CRPS, discriminative score), report them split by cluster
 - [ ] Weekday vs weekend KDE overlap will likely be high given weak day_type signal — note this in discussion
-- [ ] Envelope plot: generate separate envelopes per cluster, not just one global envelope
-- [ ] Discriminative score ~0.5 is the target; expect it may be harder to achieve for outlier clusters
+- [x] Envelope plot: replaced with `per_timestep_stddev_plot` per cluster
+- [x] Discriminative score bar chart: quality bands added (green ≤0.52, yellow ≤0.60, red >0.60)
 
 ---
 
@@ -69,16 +70,16 @@ Running date: 2026-03-26
 ### Downstream implications for notebooks 03–04
 
 **→ Notebook 03 (Diffusion training)**
-- [ ] Use the new `clusters.csv` (183/34/104 split); ensure `make_windows` in dataset.py loads it correctly
-- [ ] Verify `compute_stats` / `normalize` groups meters by these cluster_ids
-- [ ] Cluster 1 (n=34 meters) = 37 k daily windows — assess if enough for training
-- [ ] Consider printing per-cluster training window count before training starts
+- [x] Use the new `clusters.csv` (183/34/104 split); ensure `make_windows` in dataset.py loads it correctly
+- [x] Verify `compute_stats` / `normalize` groups meters by these cluster_ids
+- [x] Cluster 1 (n=34 meters) = 37 k daily windows — assess if enough for training
+- [x] Consider printing per-cluster training window count before training starts (added §1 cell)
 
 ---
 
 ## Notebook 03 — Diffusion Training (`03_diffusion_training.ipynb`)
 
-### ✅ Status: fully edited; background training running (PIDs 719740 + 721269, both CPU)
+### ✅ Status: fully edited; quick-run (5 epochs) completed; **full GPU training pending**
 
 ### Key findings & fixes
 
@@ -124,7 +125,7 @@ Running date: 2026-03-26
 
 ## Notebook 04 — Evaluation (`04_evaluation.ipynb`)
 
-### ✅ Status: fully edited, ready to run once checkpoint is available
+### ✅ Status: fully edited; validated on 5-epoch checkpoint; **re-run pending after full GPU training**
 
 ### Key findings & fixes
 
@@ -152,13 +153,16 @@ Running date: 2026-03-26
 
 ## Global / Cross-cutting TODOs
 
-- [ ] Update README / project description: data is **hourly (24 steps/day)** not 15-min/96-step
+- [x] Update README / project description: data is **hourly (24 steps/day)** not 15-min/96-step — README fully rewritten
 - [ ] Decide definitively whether to include the 22 high-consumption outlier meters in training or exclude them
-- [ ] Add a `units` note to `loader.py` docstring (values appear to be in Wh or average W; min=0, max=764,000)
+- [x] Add a `units` note to `loader.py` docstring (values in Wh/h, range 0–764,000; outlier decision rationale documented)
 - [x] Fix `metrics.py`: `acf_compare` nlags safeguard, `envelope_plot` steps_per_hour, `discriminative_score` class balance
-- [ ] Run `04_evaluation.ipynb` once background training completes (checkpoints/best_model.pkl)  
-      Training status: step 2336/23375, loss 0.9218 (both CPU procs competing; ETA several hours)
-- [ ] For thesis-quality results: re-train on GPU (~200 epochs); expected discriminative acc ≤ 0.55
+- [x] Fix `metrics.py` additional improvements: ACF Bartlett 95% CI bands, meaningful KDE hourly bins (Night/Morning/Afternoon/Evening), `sample_diversity_plot()`, `per_timestep_stddev_plot()`, `correlation_heatmap()`, `run_all_metrics()` 3-row layout
+- [x] Fix `diffusion.py` freq loss bug: target was `FFT(x0)`, corrected to `FFT(noise)`
+- [x] Git: rebased local commits on top of devcontainer commits; pushed to `origin/master` (HEAD: `ad92b4e`)
+- [x] Run `04_evaluation.ipynb` with 5-epoch checkpoint — discriminative acc 0.85–0.98 (expected; model not converged)
+- [ ] **Full GPU training**: set `QUICK_RUN = False` in nb 03, push to Colab, run ~200 epochs; expected discriminative acc ≤ 0.55
+- [ ] **Re-run `04_evaluation.ipynb`** after full training to get thesis-quality metrics
 
 ---
 
@@ -182,12 +186,13 @@ The current conditioning vector `c = [cluster_id, day_type]` is thin. Day-type i
 
 **A1. Expand the conditioning vector** `c = [cluster_id, day_type, month, day_of_week]`
 
-- [ ] `dataset.py` → `make_windows()`: extract `month` (0–11) and `day_of_week` (0–6) from the DatetimeIndex and append to `cs`
-- [ ] `transformer1d.py` → add `month_emb: eqx.nn.Embedding(12, d)` and `dow_emb: eqx.nn.Embedding(7, d)`, merge into the conditioning projection
-- [ ] `diffusion.py` → CFG null token becomes `[-1, -1, -1, -1]`
-- [ ] `train.py` → `train_step` already broadcasts null mask; just verify shapes
-- [ ] Update notebook 03 to pass the wider `c` vector
-- [ ] Re-run training (quick sanity) and confirm loss drops faster with richer conditioning
+- [x] `dataset.py` → `make_windows()`: extract `month` (0–11) and `day_of_week` (0–6) from the DatetimeIndex and append to `cs`
+- [x] `transformer1d.py` → add `month_emb: eqx.nn.Embedding(12, d)` and `dow_emb: eqx.nn.Embedding(7, d)`, merge into the conditioning projection
+- [x] `diffusion.py` → CFG null token becomes `[-1, -1, -1, -1]`
+- [x] `train.py` → `train_step` shapes verified; null mask broadcasts correctly
+- [x] Update notebooks 03 & 04 to pass the wider `c` vector (`n_months=12, n_dow=7`; 4-dim `c_batch`)
+- [x] Quick sanity run (5 epochs) completed — loss decreasing correctly with richer conditioning
+- [x] All 38 tests updated and passing (c shape `(4,)`, null `[-1,-1,-1,-1]`)
 
 **A2. Temperature / exogenous conditioning — DEFERRED**
 
@@ -195,6 +200,40 @@ Temperature data will arrive later with a different dataset. For now, document a
 When the data arrives, the architecture is ready to accept it:
 - Add a continuous conditioning channel (temperature → small MLP → merge with discrete embeddings)
 - This is an extension, not a blocker for the current comparative study
+
+---
+
+---
+
+## ⛔ GATE — Full DDPM run & evaluation (required before Phase B)
+
+**Status: pending (waiting for GPU)**
+
+Before starting Phase B or the comparison framework, the following must be completed and satisfactory:
+
+| Step | Action | Done? |
+|------|--------|-------|
+| B-gate 1 | Set `QUICK_RUN = False` in `03_diffusion_training.ipynb`, push to Colab/GPU | ⬜ |
+| B-gate 2 | Run full ~200-epoch training; confirm loss converges (relative improvement < 2%/epoch) | ⬜ |
+| B-gate 3 | Save best checkpoint (`ckpt_epoch_best.pk` or highest-epoch file) | ⬜ |
+| B-gate 4 | Run `04_evaluation.ipynb` end-to-end with the full checkpoint | ⬜ |
+| B-gate 5 | Check discriminative accuracy ≤ 0.60 on all cluster×day_type conditions | ⬜ |
+| B-gate 6 | Inspect per-cluster loss curves (`trainer.cluster_losses`) — flag if any cluster diverges | ⬜ |
+| B-gate 7 | Visually inspect denormalised sample profiles vs real (§6 in nb 04) — shapes look plausible | ⬜ |
+| B-gate 8 | Export `evaluation_metrics.csv` and record baseline numbers in this todo | ⬜ |
+
+**Baseline numbers to record here after B-gate 8** (fill in after run):
+
+| Condition | Disc. acc | CRPS | ACF L2 |
+|-----------|-----------|------|--------|
+| cluster0_weekday | — | — | — |
+| cluster0_weekend | — | — | — |
+| cluster1_weekday | — | — | — |
+| cluster1_weekend | — | — | — |
+| cluster2_weekday | — | — | — |
+| cluster2_weekend | — | — | — |
+
+**Only proceed to Phase B once all B-gate checks pass.**
 
 ---
 
@@ -214,14 +253,10 @@ The plan.txt+todo.txt explicitly list **flow matching** and **rectified flows** 
 
 **B1. Implement Rectified Flow**
 
-- [ ] `src/models/rectified_flow.py` — new `RectifiedFlowProcess` class:
-  - Linear interpolation forward: `x_t = (1-t)·x_0 + t·ε` for `t ∈ [0,1]`
-  - Loss: `MSE(v_θ(x_t, t, c), ε - x_0)` (velocity matching)
-  - Sampler: Euler ODE solver, N steps (e.g. 50–100)
-  - CFG: same formula as DDPM — `v_guided = (1+s)·v_cond - s·v_uncond`
-- [ ] **Reuse the existing `DiffusionTransformer1D` backbone** — the denoiser architecture is agnostic to the noise process. Only `__call__` signature needs `t` to be continuous [0,1] instead of discrete [0,T]. Add a flag or normalise `t` internally.
-- [ ] `src/training/train_rf.py` — training step for RF (same structure as `train.py`, different loss)
-- [ ] Notebook `03b_rectified_flow_training.ipynb` — parallel to 03, same data pipeline
+- [x] `src/models/rectified_flow.py` — `RectifiedFlowProcess`: linear interpolation, velocity loss, Euler sampler (50 steps), CFG
+- [x] **Reused `DiffusionTransformer1D` backbone** — t scaled via `round(t * 999)` → pseudo-integer for sinusoidal embedding
+- [x] `src/training/train_rf.py` — `RFTrainer` + `train_step_rf` (t ~ Uniform[0,1]), per-cluster loss logging, checkpoint save/load
+- [x] `notebooks/03b_rectified_flow_training.ipynb` — full training notebook parallel to 03
 
 **B2. (Stretch goal) Implement TimeGAN baseline**
 
@@ -239,29 +274,27 @@ Currently `04_evaluation.ipynb` is wired to a single model. We need a unified co
 
 **C1. Standardise the evaluation interface**
 
-- [ ] `src/evaluation/metrics.py` → add `compare_models(models_dict, real_data, conditions, ...)` that:
-  - Takes a dict of `{model_name: sample_generator_fn}`
-  - Generates N samples per (cluster, day_type) for each model
-  - Runs all metrics (ACF L2, CRPS, discriminative score, marginal KDE, envelope)
-  - Returns a summary DataFrame and composite figure
-- [ ] Add a **context-FID** or **marginal Wasserstein distance** metric (common in time-series generation literature) for an additional comparison axis
+- [x] `src/evaluation/metrics.py` → `compare_models(models_dict, real_data, conditions, ...)`: takes `{name: generate_fn}`, runs all metrics per condition, returns summary DataFrame
+- [x] `marginal_wasserstein()` added — mean 1-D W1 distance over all 24 timesteps
 
 **C2. Notebook `05_comparison.ipynb`** — the core comparative analysis
 
-- [ ] Load best checkpoints for DDPM and RF (and TimeGAN if available)
-- [ ] Generate matched sample sets (same conditions, same sample count)
-- [ ] Side-by-side metric table: rows = metrics, columns = models
-- [ ] Per-cluster comparison plots
-- [ ] Statistical significance: bootstrap confidence intervals on metrics
-- [ ] Ablation: effect of conditioning features (cluster only vs cluster+day_type vs cluster+day_type+month+dow)
-- [ ] Ablation: guidance scale sweep (s = 0, 0.5, 1.0, 1.5, 2.0, 3.0)
+- [x] Load best checkpoints for DDPM and RF
+- [x] Generator wrapper functions (DDIM for DDPM, Euler for RF)
+- [x] `compare_models()` call → summary table + CSV export to `data/comparison_metrics.csv`
+- [x] Discriminative accuracy bar chart + all-metrics grouped bar chart
+- [x] Per-condition mean±σ profile gallery (Real vs DDPM vs RF)
+- [x] Training convergence comparison (overlaid loss curves from checkpoints)
+- [x] CFG guidance scale ablation (s = 0, 0.5, 1.0, 1.5, 2.5, 4.0)
+- [x] Conditioning ablation (full → no dow/month → cluster-only → unconditional)
+- [ ] Bootstrap confidence intervals on metrics *(deferred — post GPU run)*
 
 **C3. Thesis figures & tables**
 
-- [ ] Summary table of all models × all metrics × all clusters
-- [ ] Training convergence comparison (loss curves overlaid)
-- [ ] Sample quality gallery: grid of real vs DDPM vs RF (vs TimeGAN) for each cluster
-- [ ] Wall-clock training time comparison
+- [x] Summary table (models × metrics × clusters) — `05_comparison.ipynb` §4
+- [x] Training convergence comparison — `05_comparison.ipynb` §6
+- [x] Sample quality gallery (real vs DDPM vs RF per cluster) — `05_comparison.ipynb` §5
+- [ ] Wall-clock training time comparison *(record manually after GPU runs)*
 
 ---
 
@@ -291,13 +324,13 @@ All comparison results will be in a **single thesis chapter** (not per-method ch
 
 ### Rough timeline (8 weeks)
 
-| Week | Phase | Milestone |
-|------|-------|-----------|
-| 1 | A1 | Expanded conditioning implemented & tested |
-| 2 | A1 | DDPM retrained with new conditioning (cloud GPU) |
-| 3 | B1 | Rectified Flow process + training loop implemented |
-| 4 | B1 | RF trained on cloud GPU, quick evaluation |
-| 5 | C1–C2 | Comparison framework + notebook 05 |
-| 6 | C2–C3 | Ablations, figures, tables |
-| 7 | D | Thesis writing, discussion, future work |
-| 8 | D | Buffer / polish / B2 stretch goal |
+| Week | Phase | Milestone | Status |
+|------|-------|-----------|--------|
+| 1 | A1 | Expanded conditioning implemented & tested | ✅ Done |
+| 2 | A1 + Gate | DDPM retrained with new conditioning (cloud GPU) + nb 04 full evaluation | ⏳ Pending (BLOCKER) |
+| 3 | B1 | Rectified Flow process + training loop implemented | ✅ Done (code ready; training blocked by gate) |
+| 4 | B1 | RF trained on cloud GPU, quick evaluation | ⬜ Not started |
+| 5 | C1–C2 | Comparison framework + notebook 05 | ⬜ Not started |
+| 6 | C2–C3 | Ablations, figures, tables | ⬜ Not started |
+| 7 | D | Thesis writing, discussion, future work | ⬜ Not started |
+| 8 | D | Buffer / polish / B2 stretch goal | ⬜ Not started |

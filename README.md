@@ -42,17 +42,22 @@ src/
     diffusion.py       # DiffusionProcess: schedule, q_sample, p_losses, DDIM, CFG
   training/
     train.py       # Trainer, JIT train_step, checkpoint save/load
+  models/
+    rectified_flow.py  # RectifiedFlowProcess: linear path, velocity loss, Euler sampler, CFG
+  training/
+    train_rf.py    # RFTrainer, JIT train_step_rf, checkpoint save/load
   evaluation/
     metrics.py     # acf_compare, marginal_kde, sample_diversity_plot,
                    # correlation_heatmap, crps_score, discriminative_score,
-                   # run_all_metrics
+                   # marginal_wasserstein, compare_models, run_all_metrics
 notebooks/
   01_eda.ipynb              # EDA, outlier analysis, seasonal heatmaps
-  02_clustering.ipynb       # Shape-normalised K-Means, clusters.csv
+  02_clustering.ipynb       # Shape-normalised K-Means, clusters.csv, outlier flagging
   03_diffusion_training.ipynb
+  03b_rectified_flow_training.ipynb  # RF training (mirrors 03)
   04_evaluation.ipynb       # Generate samples, full metric suite
-  05_comparison.ipynb        # (planned) DDPM vs Rectified Flow
-tests/                      # pytest — 38 tests covering all public APIs
+  05_comparison.ipynb       # DDPM vs RF: metrics, ablations, thesis figures
+tests/                      # pytest — 53 tests covering all public APIs
 data/
 checkpoints/
 biblio/
@@ -81,6 +86,8 @@ Full training on CPU: ~33 h for 200 epochs. Set `QUICK_RUN = True` in notebook 0
 ## Roadmap
 
 - [x] Phase A1 — Expand conditioning: `[cluster, day_type]` → `[cluster, day_type, month, dow]`
-- [ ] Phase B1 — Rectified Flow alternative model (`src/models/rectified_flow.py`)
-- [ ] Phase C — Comparison notebook 05 (DDPM vs RF, ablations, thesis figures)
+- [x] Phase B1 — Rectified Flow model: `src/models/rectified_flow.py`, `src/training/train_rf.py`, `notebooks/03b_rectified_flow_training.ipynb`
+- [x] Phase C infra — Comparison framework: `compare_models()`, `marginal_wasserstein()` in `metrics.py`, `notebooks/05_comparison.ipynb`
+- [ ] **GATE** — Full DDPM GPU training (~200 epochs) + `04_evaluation.ipynb` validation ← *in progress*
+- [ ] Full RF GPU training (`03b`) + run `05_comparison.ipynb`
 - [ ] Phase D — Temperature conditioning (data arriving later)

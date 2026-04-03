@@ -20,12 +20,15 @@ References
 from __future__ import annotations
 
 import warnings
-from typing import Optional, Tuple
+from typing import Optional, Tuple, TYPE_CHECKING
 
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from scipy.stats import gaussian_kde
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 # ---------------------------------------------------------------------------
@@ -430,3 +433,158 @@ def run_all_metrics(
 
     scalars = {"acf_l2": acf_dist, "crps": crps, "discriminative_acc": disc}
     return (scalars, fig) if return_fig else scalars
+
+
+# ---------------------------------------------------------------------------
+# Marginal Wasserstein distance (1-D, per timestep, then averaged)
+# ---------------------------------------------------------------------------
+
+def marginal_wasserstein(
+    real: np.ndarray,       # (N_real, L)
+    synthetic: np.ndarray,  # (N_syn,  L)
+) -> float:
+    """
+    Mean 1-D Wasserstein-1 distance averaged over all L timesteps.
+
+    At each timestep h, W1(real[:, h], syn[:, h]) is computed exactly via
+    the sorted-ranks formula (O(N log N), no binning):
+        W1 = mean |sort(real_h) - sort(syn_h)|
+    where both sorted sequences are interpolated to the same length.
+
+    A value near 0 means the marginal distributions match at every hour.
+    Complementary to ACF L2 (temporal structure) and CRPS (sharpness).
+    """
+    L = real.shape[1]
+    w1_per_step = []
+    for h in range(L):
+        r = np.sort(real[:, h])
+        s = np.sort(synthetic[:, h])
+        # Interpolate the shorter one to match the longer
+        if len(r) != len(s):
+            n_out = max(len(r), len(s))
+            r = np.interp(np.linspace(0, 1, n_out), np.linspace(0, 1, len(r)), r)
+            s = np.interp(np.linspace(0, 1, n_out), np.linspace(0, 1, len(s)), s)
+        w1_per_step.append(float(np.mean(np.abs(r - s))))
+    return float(np.mean(w1_per_step))
+
+
+# ---------------------------------------------------------------------------
+# Multi-model comparison framework
+# ---------------------------------------------------------------------------
+
+def compare_models(
+    models_dict: dict,          # {model_name: sample_generator_fn}
+    real_data: np.ndarray,      # (N_real, L)  real windows (all conditions pooled or per-condition)
+    conditions: np.ndarray,     # (N_real, 4)  int32 conditioning vectors
+    n_samples: int = 200,
+    unique_conditions: Optional[list] = None,
+    guidance_scale: float = 1.5,
+    n_ddim_steps: int = 50,
+    seed: int = 0,
+    show_figs: bool = False,
+    verbose: bool = True,
+) -> Tuple["pd.DataFrame", dict]:
+    """
+    Unified multi-model comparison across all (cluster × day_type) conditions.
+
+    Parameters
+    ----------
+    models_dict : dict mapping model name → callable with signature:
+                    generate(c_batch: np.ndarray, key) -> np.ndarray (N, L)
+                  where c_batch is (N, 4) int32 conditioning array.
+    real_data   : (N_real, L) array of normalised real windows.
+    conditions  : (N_real, 4) int32 conditioning vectors matching real_data rows.
+    n_samples   : number of synthetic samples to generate per condition per model.
+    unique_conditions : list of (cluster_id, day_type) tuples to evaluate.
+                        If None, all unique combinations in `conditions` are used.
+    guidance_scale : CFG guidance scale passed to generator functions.
+    n_ddim_steps   : DDIM/Euler steps for samplers.
+    seed           : base random seed.
+    show_figs      : if True, display a per-condition metric figure for each model.
+    verbose        : print progress.
+
+    Returns
+    -------
+    summary_df : pd.DataFrame  rows = (model, cluster, day_type),
+                                cols = acf_l2, crps, discriminative_acc, wasserstein
+    figs_dict  : {f"{model}_{condition_label}": matplotlib.Figure}
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        raise ImportError("pandas required for compare_models")
+
+    if unique_conditions is None:
+        # Extract unique (cluster_id, day_type) pairs
+        unique_conditions = list({
+            (int(c[0]), int(c[1])) for c in conditions
+        })
+        unique_conditions.sort()
+
+    rows = []
+    figs_dict = {}
+    rng = np.random.default_rng(seed)
+
+    for model_name, generate_fn in models_dict.items():
+        if verbose:
+            print(f"\n── Model: {model_name} ──")
+        for cid, dt in unique_conditions:
+            cond_label = f"cluster{cid}_{'weekday' if dt == 0 else 'weekend'}"
+            if verbose:
+                print(f"  {cond_label} ... ", end="", flush=True)
+
+            # Real windows for this condition
+            mask = (conditions[:, 0] == cid) & (conditions[:, 1] == dt)
+            real_cond = real_data[mask]
+            if len(real_cond) < 10:
+                if verbose:
+                    print(f"skipped (only {len(real_cond)} real samples)")
+                continue
+
+            # Build conditioning array — use month=5 (June), dow=1 (Tue)
+            # or 5 (Sat) for weekends as representative values
+            rep_dow = 1 if dt == 0 else 5
+            c_batch = np.array(
+                [[cid, dt, 5, rep_dow]] * n_samples, dtype=np.int32
+            )
+            key = rng.integers(0, 2**31)
+
+            synth_cond = generate_fn(c_batch, key)          # (n_samples, L)
+            synth_cond = np.array(synth_cond, dtype=np.float32)
+
+            # Metrics
+            acf_l2 = acf_compare(real_cond, synth_cond)
+            crps   = crps_score(real_cond, synth_cond)
+            disc   = discriminative_score(real_cond, synth_cond)
+            wass   = marginal_wasserstein(real_cond, synth_cond)
+
+            if verbose:
+                print(
+                    f"disc={disc:.3f}  crps={crps:.4f}  "
+                    f"acf_l2={acf_l2:.4f}  wass={wass:.4f}"
+                )
+
+            rows.append({
+                "model":              model_name,
+                "cluster":            cid,
+                "day_type":           "weekday" if dt == 0 else "weekend",
+                "condition":          cond_label,
+                "n_real":             len(real_cond),
+                "n_synthetic":        n_samples,
+                "acf_l2":             acf_l2,
+                "crps":               crps,
+                "discriminative_acc": disc,
+                "wasserstein":        wass,
+            })
+
+            if show_figs:
+                scalars, fig = run_all_metrics(
+                    real_cond, synth_cond,
+                    label=f"{model_name} | {cond_label}",
+                    show=True, return_fig=True,
+                )
+                figs_dict[f"{model_name}_{cond_label}"] = fig
+
+    import pandas as pd
+    summary_df = pd.DataFrame(rows)
+    return summary_df, figs_dict
