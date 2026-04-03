@@ -21,6 +21,8 @@ def _tiny_model(seq_len=24, d_model=32, n_heads=2, n_layers=2, n_clusters=3):
         d_ff=64,
         n_clusters=n_clusters,
         n_day_types=2,
+        n_months=12,
+        n_dow=7,
         key=jax.random.PRNGKey(0),
     )
 
@@ -38,7 +40,7 @@ class TestDiffusionTransformer1D:
         model = _tiny_model()
         x_t = jax.random.normal(jax.random.PRNGKey(1), (24,))
         t = jnp.array(5, dtype=jnp.int32)
-        c = jnp.array([0, 0], dtype=jnp.int32)
+        c = jnp.array([0, 0, 0, 0], dtype=jnp.int32)
         out = model(x_t, t, c)
         assert out.shape == (24,)
 
@@ -48,19 +50,19 @@ class TestDiffusionTransformer1D:
         B = 8
         x_t = jax.random.normal(jax.random.PRNGKey(2), (B, 24))
         t = jnp.ones(B, dtype=jnp.int32) * 5
-        c = jnp.zeros((B, 2), dtype=jnp.int32)
+        c = jnp.zeros((B, 4), dtype=jnp.int32)
         out = jax.vmap(model)(x_t, t, c)
         assert out.shape == (B, 24)
 
     def test_null_conditioning(self):
-        """Null conditioning c=[-1,-1] must run without error."""
+        """Null conditioning c=[-1,-1,-1,-1] must run without error."""
         model = _tiny_model()
         x_t = jax.random.normal(jax.random.PRNGKey(3), (24,))
         t = jnp.array(0, dtype=jnp.int32)
-        c_null = jnp.array([-1, -1], dtype=jnp.int32)
+        c_null = jnp.array([-1, -1, -1, -1], dtype=jnp.int32)
         out = model(x_t, t, c_null)
         assert out.shape == (24,)
-        # null conditioning must zero out cluster/day embeddings → output should be finite
+        # null conditioning must zero out all embeddings → output should be finite
         assert jnp.all(jnp.isfinite(out))
 
     def test_output_finite(self):
@@ -69,10 +71,11 @@ class TestDiffusionTransformer1D:
         x_t = jax.random.normal(jax.random.PRNGKey(4), (24,))
         for cid in range(3):
             for dt in range(2):
-                t = jnp.array(1, dtype=jnp.int32)
-                c = jnp.array([cid, dt], dtype=jnp.int32)
-                out = model(x_t, t, c)
-                assert jnp.all(jnp.isfinite(out)), f"Non-finite output for c=[{cid},{dt}]"
+                for mo in [0, 5, 11]:
+                    t = jnp.array(1, dtype=jnp.int32)
+                    c = jnp.array([cid, dt, mo, dt * 5], dtype=jnp.int32)
+                    out = model(x_t, t, c)
+                    assert jnp.all(jnp.isfinite(out)), f"Non-finite output for c=[{cid},{dt},{mo}]"
 
     def test_is_equinox_module(self):
         model = _tiny_model()
@@ -113,7 +116,7 @@ class TestDiffusionProcess:
         key = jax.random.PRNGKey(42)
         B = 4
         x0 = jax.random.normal(key, (B, 24))
-        c = jnp.zeros((B, 2), dtype=jnp.int32)
+        c = jnp.zeros((B, 4), dtype=jnp.int32)
         t = jax.random.randint(key, (B,), 0, 10, dtype=jnp.int32)
         loss = dp.p_losses(model, x0, c, t, key)
         assert loss.shape == ()
@@ -124,7 +127,7 @@ class TestDiffusionProcess:
         model = _tiny_model()
         key = jax.random.PRNGKey(5)
         B = 3
-        c = jnp.zeros((B, 2), dtype=jnp.int32)
+        c = jnp.zeros((B, 4), dtype=jnp.int32)
         samples = dp.ddpm_sample(model, c, seq_len=24, batch_size=B, key=key, guidance_scale=1.0)
         assert samples.shape == (B, 24)
         assert jnp.all(jnp.isfinite(samples))
@@ -134,7 +137,7 @@ class TestDiffusionProcess:
         model = _tiny_model()
         key = jax.random.PRNGKey(6)
         B = 3
-        c = jnp.zeros((B, 2), dtype=jnp.int32)
+        c = jnp.zeros((B, 4), dtype=jnp.int32)
         samples = dp.ddim_sample(model, c, seq_len=24, batch_size=B, key=key, n_steps=5, guidance_scale=1.0)
         assert samples.shape == (B, 24)
         assert jnp.all(jnp.isfinite(samples))
@@ -143,7 +146,7 @@ class TestDiffusionProcess:
         """Same key + eta=0 must give identical samples."""
         dp = _tiny_diffusion(T=10)
         model = _tiny_model()
-        c = jnp.zeros((2, 2), dtype=jnp.int32)
+        c = jnp.zeros((2, 4), dtype=jnp.int32)
         key = jax.random.PRNGKey(7)
         s1 = dp.ddim_sample(model, c, seq_len=24, batch_size=2, key=key, n_steps=5, eta=0.0)
         s2 = dp.ddim_sample(model, c, seq_len=24, batch_size=2, key=key, n_steps=5, eta=0.0)

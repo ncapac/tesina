@@ -206,14 +206,19 @@ class DiffusionTransformer1D(eqx.Module):
 
     Conditioning
     ------------
+    c = [cluster_id, day_type, month, dow]  (int32, shape (4,))
+    Null conditioning: c = [-1, -1, -1, -1]  (CFG unconditional pass)
+
     t_emb_proj  : sinusoidal(t) → d_model
-    cond_embed  : [cluster_emb ⊕ daytype_emb] → d_cond  (for AdaLN)
+    cond_embed  : [cluster ⊕ day_type ⊕ month ⊕ dow] → d_cond  (for AdaLN)
     """
     # Embeddings
     t_proj: eqx.nn.Linear
     cluster_emb: eqx.nn.Embedding
     daytype_emb: eqx.nn.Embedding
-    cond_proj: eqx.nn.Linear   # merge t + discrete cond → d_cond
+    month_emb: eqx.nn.Embedding
+    dow_emb: eqx.nn.Embedding
+    cond_proj: eqx.nn.Linear   # merge t + all discrete cond → d_cond
 
     # Input projection
     in_proj: eqx.nn.Linear     # scalar → d_model per timestep
@@ -242,12 +247,14 @@ class DiffusionTransformer1D(eqx.Module):
         d_ff: int = 256,
         n_clusters: int = 3,
         n_day_types: int = 2,
+        n_months: int = 12,
+        n_dow: int = 7,
         ma_kernel: int = 5,
         t_emb_dim: int = 128,
         *,
         key: jax.Array,
     ):
-        keys = jax.random.split(key, 10 + n_layers)
+        keys = jax.random.split(key, 12 + n_layers)  # 2 extra for month_emb + dow_emb
         ki = iter(keys)
 
         self.seq_len   = seq_len
@@ -258,15 +265,23 @@ class DiffusionTransformer1D(eqx.Module):
         # Timestep embedding: sinusoidal(t) has size t_emb_dim → project to d_model
         self.t_proj = eqx.nn.Linear(t_emb_dim, d_model, key=next(ki))
 
-        # Discrete conditioning embeddings
-        d_cluster = d_model // 2
-        d_daytype = d_model // 2
-        self.cluster_emb = eqx.nn.Embedding(n_clusters, d_cluster, key=next(ki))
+        # Discrete conditioning embeddings — equal share of d_model each
+        # Total emb dim = 4 × (d_model//4) = d_model, so cond_proj input stays 2×d_model
+        d_cluster = d_model // 4
+        d_daytype = d_model // 4
+        d_month   = d_model // 4
+        d_dow     = d_model // 4
+        self.cluster_emb = eqx.nn.Embedding(n_clusters,  d_cluster, key=next(ki))
         self.daytype_emb = eqx.nn.Embedding(n_day_types, d_daytype, key=next(ki))
+        self.month_emb   = eqx.nn.Embedding(n_months,    d_month,   key=next(ki))
+        self.dow_emb     = eqx.nn.Embedding(n_dow,       d_dow,     key=next(ki))
 
-        # Fuse t_emb + cluster_emb + daytype_emb → d_cond for AdaLN
+        # Fuse t_emb + all discrete embeddings → d_cond for AdaLN
+        # input size = d_model + 4×(d_model//4) = 2×d_model = 256 (same as before)
         d_cond = d_model
-        self.cond_proj = eqx.nn.Linear(d_model + d_cluster + d_daytype, d_cond, key=next(ki))
+        self.cond_proj = eqx.nn.Linear(
+            d_model + d_cluster + d_daytype + d_month + d_dow, d_cond, key=next(ki)
+        )
 
         # Input projection: each scalar timestep value → d_model token
         self.in_proj = eqx.nn.Linear(1, d_model, key=next(ki))
@@ -288,13 +303,13 @@ class DiffusionTransformer1D(eqx.Module):
         self,
         x_t: jax.Array,    # (seq_len,)  noisy input
         t: jax.Array,       # ()          scalar int diffusion step
-        c: jax.Array,       # (2,)        int [cluster_id, day_type]; ∅ = [-1,-1]
+        c: jax.Array,       # (4,)        int [cluster_id, day_type, month, dow]; ∅ = [-1,-1,-1,-1]
     ) -> jax.Array:
         """
         Returns predicted noise ε_θ(x_t, c, t) of shape (seq_len,).
 
-        When c = [-1, -1] (null conditioning for CFG unconditional pass),
-        the embeddings are zeroed out.
+        When c = [-1, -1, -1, -1] (null conditioning for CFG unconditional pass),
+        all discrete embeddings are zeroed out.
         """
         L = self.seq_len
 
@@ -303,17 +318,23 @@ class DiffusionTransformer1D(eqx.Module):
         t_emb = jax.nn.silu(self.t_proj(t_sinusoid))          # (d_model,)
 
         # 2. Discrete conditioning  (null conditioning: ids = -1 → zero vector)
-        null = (c[0] < 0)
+        null    = (c[0] < 0)
         safe_c0 = jnp.where(null, 0, c[0])
         safe_c1 = jnp.where(null, 0, c[1])
-        cl_emb = self.cluster_emb(safe_c0)                     # (d_cluster,)
-        dt_emb = self.daytype_emb(safe_c1)                     # (d_daytype,)
+        safe_c2 = jnp.where(null, 0, c[2])
+        safe_c3 = jnp.where(null, 0, c[3])
+        cl_emb = self.cluster_emb(safe_c0)   # (d_cluster,)
+        dt_emb = self.daytype_emb(safe_c1)   # (d_daytype,)
+        mo_emb = self.month_emb(safe_c2)     # (d_month,)
+        dw_emb = self.dow_emb(safe_c3)       # (d_dow,)
         cl_emb = jnp.where(null, jnp.zeros_like(cl_emb), cl_emb)
         dt_emb = jnp.where(null, jnp.zeros_like(dt_emb), dt_emb)
+        mo_emb = jnp.where(null, jnp.zeros_like(mo_emb), mo_emb)
+        dw_emb = jnp.where(null, jnp.zeros_like(dw_emb), dw_emb)
 
         # 3. Fuse into conditioning vector for AdaLN
         cond = jax.nn.silu(
-            self.cond_proj(jnp.concatenate([t_emb, cl_emb, dt_emb]))
+            self.cond_proj(jnp.concatenate([t_emb, cl_emb, dt_emb, mo_emb, dw_emb]))
         )  # (d_cond,)
 
         # 4. Token embedding: each of the L scalar values → d_model

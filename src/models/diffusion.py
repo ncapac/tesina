@@ -133,10 +133,11 @@ class DiffusionProcess(eqx.Module):
         # MSE noise loss
         mse = jnp.mean((noise - eps_pred) ** 2)
 
-        # Frequency loss: compare magnitude spectra of prediction vs clean signal
+        # Frequency loss: compare magnitude spectra of noise prediction vs actual noise
+        # (regularises the model to match the temporal-frequency structure of Gaussian noise)
         fft_pred  = jnp.abs(jnp.fft.rfft(eps_pred, axis=-1))
-        fft_real  = jnp.abs(jnp.fft.rfft(x0, axis=-1))
-        freq_loss = jnp.mean((fft_pred - fft_real) ** 2)
+        fft_noise = jnp.abs(jnp.fft.rfft(noise,    axis=-1))
+        freq_loss = jnp.mean((fft_pred - fft_noise) ** 2)
 
         return mse + self.freq_loss_weight * freq_loss
 
@@ -148,13 +149,15 @@ class DiffusionProcess(eqx.Module):
         self,
         model: eqx.Module,
         x_t: jax.Array,        # (B, L)
-        c: jax.Array,           # (B, 2) int
+        c: jax.Array,           # (B, 4) int
         t: jax.Array,           # (B,)   int
         guidance_scale: float,
     ) -> jax.Array:
         """
         Classifier-Free Guidance:
           ε_guided = (1+s) · ε_θ(x_t, c, t)  -  s · ε_θ(x_t, ∅, t)
+
+        Null token: jnp.full_like(c, -1) works for any c shape (2 or 4 dims).
         """
         eps_cond   = jax.vmap(model)(x_t, t, c)
 

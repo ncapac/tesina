@@ -15,7 +15,7 @@ Public API
 ----------
 make_windows(df, cluster_labels, timestamps=None)
     -> xs: np.ndarray  (N_windows, 24)  float32
-    -> cs: np.ndarray  (N_windows, 2)   int32    [cluster_id, day_type]
+    -> cs: np.ndarray  (N_windows, 4)   int32    [cluster_id, day_type, month, dow]
 
 train_val_split(xs, cs, meter_ids, val_fraction=0.15)
     -> (xs_tr, cs_tr), (xs_va, cs_va)
@@ -56,7 +56,7 @@ def make_windows(
     Returns
     -------
     xs  : (N_windows, 24) float32 — normalised consumption windows
-    cs  : (N_windows, 2)  int32   — [cluster_id, day_type]
+    cs  : (N_windows, 4)  int32   — [cluster_id, day_type, month, dow]
     mid : (N_windows,)    int32   — meter column index (for splitting)
     """
     T, N = df.shape
@@ -82,17 +82,19 @@ def make_windows(
                 xs_coord = np.where(~nans)[0]
                 window[nans] = np.interp(np.where(nans)[0], xs_coord, window[~nans])
 
-            # Day type
+            # Day type, month, day-of-week
             if timestamps is not None:
                 step_ts = timestamps[start]
-                dow = step_ts.dayofweek
+                dow   = step_ts.dayofweek   # 0=Mon … 6=Sun
+                month = step_ts.month - 1   # 0-indexed: 0=Jan … 11=Dec
             else:
                 # Assume start of data is Monday
-                dow = (day % 7)
+                dow   = day % 7
+                month = (day // 30) % 12    # rough month from day index
             dt = _day_type(dow)
 
             xs_list.append(window)
-            cs_list.append([cid, dt])
+            cs_list.append([cid, dt, month, dow])
             mid_list.append(meter_idx)
 
     xs = np.stack(xs_list, axis=0)                  # (N, 24)

@@ -4,6 +4,17 @@ loader.py
 Load the raw power.pk dataset, inspect it, and produce a clean
 pandas DataFrame with a DatetimeIndex and one column per smart-meter.
 
+Data facts (Portuguese smart-meter dataset, 2012–2014)
+------------------------------------------------------
+  T × N  : ~26 304 timesteps × 321 meters  (hourly, 24 steps/day)
+  Units  : Wh per hour (equivalent to average W per hour);
+           values in [0, ~764 000] across all meters.
+  Outliers: 22 meters have mean > 10× dataset median (max ×339);
+            they are kept in training but isolated into their own
+            cluster naturally by the shape-normalised K-Means.
+            Per-cluster z-score normalisation in compute_stats()/
+            normalize() handles the 3-order-of-magnitude scale range.
+
 Expected pickle structure (will be confirmed during EDA):
   - Either a pandas DataFrame  (meters as columns, DatetimeIndex)
   - Or a dict {'data': np.ndarray, 'timestamps': ..., 'meter_ids': ...}

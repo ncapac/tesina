@@ -55,6 +55,7 @@ def acf_compare(
     nlags = min(nlags, real.shape[1] - 1)
     """
     Overlay mean ACF of real vs synthetic samples.
+    Includes ±1.96/√N Bartlett confidence bands (95% CI for white noise).
     Returns L2 distance between the two mean ACF vectors.
     """
     real_acfs = np.array([_acf(s, nlags) for s in real])    # (N, nlags+1)
@@ -70,10 +71,17 @@ def acf_compare(
         ax.plot(lags, mean_real, color="steelblue", linewidth=2, label="real mean")
         ax.plot(lags, mean_syn,  color="coral",     linewidth=2, label="syn mean")
         ax.axhline(0, color="k", linewidth=0.5, linestyle="--")
+
+        # Bartlett 95% confidence bands (white-noise null)
+        n_obs = real.shape[1]
+        ci = 1.96 / np.sqrt(n_obs)
+        ax.axhline( ci, color="gray", linewidth=0.8, linestyle=":", label=f"±1.96/√n")
+        ax.axhline(-ci, color="gray", linewidth=0.8, linestyle=":")
+
         ax.set_xlabel("Lag (hours)")
         ax.set_ylabel("ACF")
-        ax.set_title(f"ACF comparison {label}")
-        ax.legend(fontsize=8)
+        ax.set_title(f"ACF {label}")
+        ax.legend(fontsize=7)
 
     return float(np.linalg.norm(mean_real - mean_syn))
 
@@ -85,23 +93,34 @@ def acf_compare(
 def marginal_kde(
     real: np.ndarray,       # (N_real, L)
     synthetic: np.ndarray,  # (N_syn,  L)
-    time_bins: int = 4,
     ax: Optional[plt.Axes] = None,
     label: str = "",
 ) -> None:
     """
-    Plot KDE of value distributions for equally-spaced time bins.
+    Plot KDE of value distributions for 4 meaningful time-of-day bins.
+    When L==24 (hourly): Night 00-05, Morning 06-11, Afternoon 12-17, Evening 18-23.
+    Otherwise falls back to 4 equal-width bins.
     """
     L = real.shape[1]
-    bin_size = L // time_bins
-    if ax is None:
-        _, ax = plt.subplots(1, time_bins, figsize=(4 * time_bins, 3))
-    elif not hasattr(ax, "__len__"):
-        ax = [ax] * time_bins
 
-    for i in range(time_bins):
-        start = i * bin_size
-        end   = start + bin_size
+    if L == 24:
+        bins = [
+            ("Night\n(00-05)",   0,  6),
+            ("Morning\n(06-11)", 6,  12),
+            ("Afternoon\n(12-17)", 12, 18),
+            ("Evening\n(18-23)", 18, 24),
+        ]
+    else:
+        bw = L // 4
+        bins = [(f"Steps {i*bw}-{(i+1)*bw}", i*bw, (i+1)*bw) for i in range(4)]
+
+    n_bins = len(bins)
+    if ax is None:
+        _, ax = plt.subplots(1, n_bins, figsize=(4 * n_bins, 3))
+    elif not hasattr(ax, "__len__"):
+        ax = [ax] * n_bins
+
+    for i, (bin_label, start, end) in enumerate(bins):
         r_vals = real[:, start:end].ravel()
         s_vals = synthetic[:, start:end].ravel()
 
@@ -115,11 +134,114 @@ def marginal_kde(
                        linewidth=2, label="real")
             ax[i].plot(common, gaussian_kde(s_vals)(common), color="coral",
                        linewidth=2, label="synthetic")
-        ax[i].set_title(f"Steps {start}–{end}")
+        ax[i].set_title(bin_label, fontsize=9)
         ax[i].set_xlabel("Normalised consumption")
         if i == 0:
             ax[i].set_ylabel("Density")
         ax[i].legend(fontsize=8)
+
+
+# ---------------------------------------------------------------------------
+# Sample diversity plot
+# ---------------------------------------------------------------------------
+
+def sample_diversity_plot(
+    real: np.ndarray,       # (N_real, L)
+    synthetic: np.ndarray,  # (N_syn,  L)
+    ax: Optional[plt.Axes] = None,
+    label: str = "",
+    n_traces: int = 20,
+) -> None:
+    """
+    Mean ±1σ envelope + individual sample traces.
+    Reveals whether the model is diverse or collapsing to the mean.
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(10, 4))
+
+    L   = real.shape[1]
+    hrs = np.arange(L)
+    rng = np.random.default_rng(0)
+
+    # Thin sample traces
+    idx_r = rng.choice(len(real),      min(n_traces, len(real)),      replace=False)
+    idx_s = rng.choice(len(synthetic), min(n_traces, len(synthetic)), replace=False)
+    for tr in real[idx_r]:
+        ax.plot(hrs, tr, color="steelblue", alpha=0.12, linewidth=0.8)
+    for tr in synthetic[idx_s]:
+        ax.plot(hrs, tr, color="coral",     alpha=0.12, linewidth=0.8)
+
+    # Mean ±σ envelopes
+    r_mean, r_std = real.mean(0), real.std(0)
+    s_mean, s_std = synthetic.mean(0), synthetic.std(0)
+    ax.fill_between(hrs, r_mean - r_std, r_mean + r_std, alpha=0.25, color="steelblue")
+    ax.fill_between(hrs, s_mean - s_std, s_mean + s_std, alpha=0.25, color="coral")
+    ax.plot(hrs, r_mean, color="steelblue", linewidth=2,   label="real mean")
+    ax.plot(hrs, s_mean, color="coral",     linewidth=2,   linestyle="--", label="synth mean")
+
+    ax.set_xlabel("Hour of day")
+    ax.set_ylabel("Normalised consumption")
+    ax.set_title(f"Sample diversity {label}")
+    ax.legend(fontsize=8)
+
+
+# ---------------------------------------------------------------------------
+# Pairwise hour correlation heatmap
+# ---------------------------------------------------------------------------
+
+def correlation_heatmap(
+    real: np.ndarray,       # (N_real, L)
+    synthetic: np.ndarray,  # (N_syn,  L)
+    axes: Optional[Tuple[plt.Axes, plt.Axes]] = None,
+    label: str = "",
+) -> None:
+    """
+    Side-by-side Pearson correlation matrices (L×L) for real and synthetic.
+    Differences reveal whether temporal correlations are preserved.
+    """
+    import matplotlib.colors as mcolors
+    if axes is None:
+        _, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+    corr_r = np.corrcoef(real.T)        # (L, L)
+    corr_s = np.corrcoef(synthetic.T)   # (L, L)
+
+    vmin, vmax = -1.0, 1.0
+    kw = dict(vmin=vmin, vmax=vmax, cmap="RdBu_r", aspect="auto")
+    im0 = axes[0].imshow(corr_r, **kw)
+    axes[0].set_title(f"Real corr {label}",      fontsize=9)
+    im1 = axes[1].imshow(corr_s, **kw)
+    axes[1].set_title(f"Synthetic corr {label}", fontsize=9)
+    for ax in axes:
+        ax.set_xlabel("Hour"); ax.set_ylabel("Hour")
+    plt.colorbar(im1, ax=axes[1], fraction=0.046)
+
+
+# ---------------------------------------------------------------------------
+# Per-timestep standard deviation comparison
+# ---------------------------------------------------------------------------
+
+def per_timestep_stddev_plot(
+    real: np.ndarray,       # (N_real, L)
+    synthetic: np.ndarray,  # (N_syn,  L)
+    ax: Optional[plt.Axes] = None,
+    label: str = "",
+) -> None:
+    """
+    Plot real σ(t) vs synthetic σ(t) for every timestep.
+    More intuitive than ACF for detecting heteroskedasticity mismatch:
+    if the model is too flat it shows as suppressed σ during peak hours.
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(8, 3))
+
+    hrs = np.arange(real.shape[1])
+    ax.plot(hrs, real.std(0),      color="steelblue", linewidth=2, label="real σ")
+    ax.plot(hrs, synthetic.std(0), color="coral",     linewidth=2, linestyle="--", label="synth σ")
+    ax.set_xlabel("Hour of day")
+    ax.set_ylabel("σ (normalised)")
+    ax.set_title(f"Per-hour std deviation {label}")
+    ax.legend(fontsize=8)
 
 
 # ---------------------------------------------------------------------------
@@ -251,30 +373,60 @@ def run_all_metrics(
     real: np.ndarray,
     synthetic: np.ndarray,
     label: str = "",
-    figsize: Tuple[int, int] = (18, 12),
+    figsize: Tuple[int, int] = (20, 16),
+    show: bool = True,
+    return_fig: bool = False,
 ) -> dict:
     """
-    Run all metrics and produce a summary figure.
-    Returns dict with scalar values.
+    Run all metrics and produce a 4-row summary figure.
+
+    Layout
+    ------
+    Row 0 : ACF (with 95% CI bands)  |  Sample diversity (mean±σ + traces)
+    Row 1 : Marginal KDE — 4 meaningful hour-of-day bins
+    Row 2 : Per-hour std deviation comparison  |  Pairwise correlation heatmaps
+    Row 3 : (reserved for future extension)
+
+    Parameters
+    ----------
+    show       : if False the figure is not displayed (batch/script mode).
+    return_fig : if True the matplotlib Figure is returned alongside the
+                 scalar dict, as a (dict, fig) tuple. Useful for notebook 05
+                 where many figures need to be saved without being shown.
+
+    Returns
+    -------
+    dict  with keys: acf_l2, crps, discriminative_acc
+        or (dict, fig) if return_fig=True
     """
     fig = plt.figure(figsize=figsize)
-    gs = gridspec.GridSpec(2, 3, figure=fig)
+    gs  = gridspec.GridSpec(3, 4, figure=fig, hspace=0.50, wspace=0.38)
 
     ax_acf  = fig.add_subplot(gs[0, 0])
-    ax_env  = fig.add_subplot(gs[0, 1:])
-    ax_kde  = [fig.add_subplot(gs[1, i]) for i in range(3)]
+    ax_div  = fig.add_subplot(gs[0, 1:])
+    ax_kde  = [fig.add_subplot(gs[1, i]) for i in range(4)]
+    ax_std  = fig.add_subplot(gs[2, :2])
+    ax_corr = [fig.add_subplot(gs[2, 2]), fig.add_subplot(gs[2, 3])]
 
     acf_dist = acf_compare(real, synthetic, nlags=real.shape[1] - 1, ax=ax_acf, label=label)
-    envelope_plot(real, synthetic, ax=ax_env, label=label)
-    marginal_kde(real, synthetic, time_bins=3, ax=ax_kde, label=label)
+    sample_diversity_plot(real, synthetic, ax=ax_div, label=label)
+    marginal_kde(real, synthetic, ax=ax_kde, label=label)
+    per_timestep_stddev_plot(real, synthetic, ax=ax_std, label=label)
+    correlation_heatmap(real, synthetic, axes=ax_corr, label=label)
 
     crps = crps_score(real, synthetic)
     disc = discriminative_score(real, synthetic)
 
     fig.suptitle(
-        f"{label} | ACF L2={acf_dist:.3f} | CRPS={crps:.4f} | Discriminative acc={disc:.3f}",
-        fontsize=12,
+        f"{label}  |  ACF L2={acf_dist:.3f}  |  CRPS={crps:.4f}  |  Disc. acc={disc:.3f}",
+        fontsize=12, fontweight="bold",
     )
     plt.tight_layout()
 
-    return {"acf_l2": acf_dist, "crps": crps, "discriminative_acc": disc}
+    if show:
+        plt.show()
+    elif not return_fig:
+        plt.close(fig)
+
+    scalars = {"acf_l2": acf_dist, "crps": crps, "discriminative_acc": disc}
+    return (scalars, fig) if return_fig else scalars

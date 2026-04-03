@@ -35,7 +35,7 @@ class TestMakeWindows:
 
         assert xs.ndim == 2
         assert xs.shape[1] == STEPS_PER_DAY
-        assert cs.shape == (xs.shape[0], 2)
+        assert cs.shape == (xs.shape[0], 4)
         assert mid.shape == (xs.shape[0],)
         assert xs.shape[0] == n_days * n_meters
 
@@ -49,15 +49,17 @@ class TestMakeWindows:
         assert mid.dtype == np.int32
 
     def test_conditioning_range(self):
-        """cluster_id and day_type must use valid values."""
+        """All conditioning fields must be in valid ranges."""
         n_meters = 6
         df = _make_df(n_days=14, n_meters=n_meters)
         labels = np.array([0, 0, 1, 1, 2, 2])
         xs, cs, mid = make_windows(df, labels, df.index)
 
         assert cs[:, 0].min() >= 0
-        assert cs[:, 0].max() <= labels.max()
-        assert set(cs[:, 1].tolist()).issubset({0, 1})
+        assert cs[:, 0].max() <= labels.max()      # cluster_id
+        assert set(cs[:, 1].tolist()).issubset({0, 1})  # day_type
+        assert cs[:, 2].min() >= 0 and cs[:, 2].max() <= 11  # month 0-11
+        assert cs[:, 3].min() >= 0 and cs[:, 3].max() <= 6   # dow 0-6
 
     def test_day_type_weekday_weekend(self):
         """2012-01-02 is Monday → first week should have 5 weekdays + 2 weekends."""
