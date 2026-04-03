@@ -19,8 +19,6 @@ env/
 *.ipynb_checkpoints/
 
 # Large data files
-data/power.pk
-data/*.pk
 data/*.pkl
 data/*.h5
 data/*.hdf5
