@@ -145,7 +145,12 @@ class Trainer:
         log_every_steps: int = 50,
         val_batches: int = 20,
         log_cluster_losses: bool = True,
+        patience: int = 20,
+        min_delta: float = 1e-4,
     ):
+        best_val_loss = float('inf')
+        epochs_without_improvement = 0
+
         for epoch in range(1, n_epochs + 1):
             t0 = time.time()
             epoch_losses = []
@@ -221,6 +226,21 @@ class Trainer:
 
             if epoch % save_every == 0:
                 self.save(f"ckpt_epoch{epoch:04d}.pk")
+
+            # Early stopping on validation loss
+            if self.val_losses:
+                current_val = self.val_losses[-1]
+                if current_val < best_val_loss - min_delta:
+                    best_val_loss = current_val
+                    epochs_without_improvement = 0
+                    self.save("best_model.pkl")
+                else:
+                    epochs_without_improvement += 1
+                    if epochs_without_improvement >= patience:
+                        print(f"\nEarly stopping at epoch {epoch} "
+                              f"(no improvement for {patience} epochs). "
+                              f"Best val loss: {best_val_loss:.4f}")
+                        break
 
     # ------------------------------------------------------------------
     def save(self, filename: str):
