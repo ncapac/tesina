@@ -24,10 +24,22 @@ data/*.h5
 data/*.hdf5
 
 # Checkpoints / model weights
-checkpoints/
+checkpoints/*
+!checkpoints/.gitkeep
 *.ckpt
 *.pt
 *.pth
+
+# Generated results
+results/*
+!results/.gitkeep
+!results/**/
+results/**/*
+!results/**/.gitkeep
+!results/**/*.csv
+!results/**/*.json
+
+
 
 # IDE
 .vscode/

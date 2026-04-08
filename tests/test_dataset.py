@@ -129,17 +129,17 @@ class TestNumpyDataloader:
     def test_batch_shape(self):
         n, seq, batch = 100, STEPS_PER_DAY, 16
         xs = np.zeros((n, seq), dtype=np.float32)
-        cs = np.zeros((n, 2), dtype=np.int32)
+        cs = np.zeros((n, 4), dtype=np.int32)
         gen = numpy_dataloader(xs, cs, batch_size=batch, shuffle=False)
         x_b, c_b = next(gen)
         assert x_b.shape == (batch, seq)
-        assert c_b.shape == (batch, 2)
+        assert c_b.shape == (batch, 4)
 
     def test_infinite_generator(self):
         """Generator should yield indefinitely without StopIteration."""
         n, batch = 20, 8
         xs = np.zeros((n, STEPS_PER_DAY), dtype=np.float32)
-        cs = np.zeros((n, 2), dtype=np.int32)
+        cs = np.zeros((n, 4), dtype=np.int32)
         gen = numpy_dataloader(xs, cs, batch_size=batch, shuffle=False)
         for _ in range(10):
             x_b, c_b = next(gen)
@@ -147,8 +147,31 @@ class TestNumpyDataloader:
     def test_drops_last_incomplete_batch(self):
         n = 25  # 25 samples, batch=8 → batches of exactly 8
         xs = np.arange(n * STEPS_PER_DAY, dtype=np.float32).reshape(n, STEPS_PER_DAY)
-        cs = np.zeros((n, 2), dtype=np.int32)
+        cs = np.zeros((n, 4), dtype=np.int32)
         gen = numpy_dataloader(xs, cs, batch_size=8, shuffle=False)
         for _ in range(3):  # 3 full batches of 8 = 24 samples, last 1 dropped
             x_b, _ = next(gen)
             assert x_b.shape[0] == 8
+
+    def test_balanced_loader_balances_cluster_daytype_groups(self):
+        xs = np.zeros((18, STEPS_PER_DAY), dtype=np.float32)
+        cs = np.array(
+            [[0, 0, 0, 0]] * 8
+            + [[1, 0, 0, 1]] * 6
+            + [[2, 1, 0, 6]] * 4,
+            dtype=np.int32,
+        )
+
+        gen = numpy_dataloader(
+            xs,
+            cs,
+            batch_size=9,
+            shuffle=True,
+            balance_condition_cols=(0, 1),
+            rng=np.random.default_rng(3),
+        )
+        _, c_b = next(gen)
+
+        unique_rows, counts = np.unique(c_b[:, :2], axis=0, return_counts=True)
+        assert {tuple(row) for row in unique_rows} == {(0, 0), (1, 0), (2, 1)}
+        assert counts.max() - counts.min() <= 1

@@ -79,7 +79,7 @@ Last updated: 2026-04-03
 
 ## Notebook 03 — Diffusion Training (`03_diffusion_training.ipynb`)
 
-### ✅ Status: fully edited; quick-run (5 epochs) completed; **full GPU training pending**
+### ✅ Status: fully edited; GPU run completed once; **baseline rerun pending with corrected evaluation pipeline**
 
 ### Key findings & fixes
 
@@ -117,7 +117,7 @@ Last updated: 2026-04-03
 ### Downstream implications
 
 **→ Notebook 04 (Evaluation)**
-- [ ] After full GPU training, reload best checkpoint and rerun all metrics
+- [ ] After the next full GPU training run, reload the repo-local best checkpoint and rerun all metrics
 - [ ] After only 5 epochs, discriminative score will be high (model not converged) — expected
 - [ ] Sample quality at 5 epochs: shapes may have rough temporal structure, not yet sharp peaks
 
@@ -125,7 +125,7 @@ Last updated: 2026-04-03
 
 ## Notebook 04 — Evaluation (`04_evaluation.ipynb`)
 
-### ✅ Status: fully edited; validated on 5-epoch checkpoint; **re-run pending after full GPU training**
+### ✅ Status: fully edited; evaluation methodology corrected; **re-run pending after baseline retraining**
 
 ### Key findings & fixes
 
@@ -137,6 +137,7 @@ Last updated: 2026-04-03
 | 4 | `c_batch` dtype in generation cell lacked `dtype=jnp.int32` | Bug | Fixed ✅ |
 | 5 | Data cell discarded `x_train`/`c_train` (underscore) | Completeness | Fixed ✅ |
 | 6 | No final observations cell | Completeness | Added ✅ §8 with per-condition quality printout |
+| 7 | Synthetic samples were generated at a fixed `(month, dow)` while real windows were pooled over the full calendar mix | Methodology | Fixed ✅ empirical `(month, dow)` resampling per `(cluster_id, day_type)` slice |
 
 ### Metric validation (random normals)
 - ACF L2 (random vs random, 24 lags): 0.077 — correct for finite-sample noise
@@ -154,6 +155,7 @@ Last updated: 2026-04-03
 ## Global / Cross-cutting TODOs
 
 - [x] Update README / project description: data is **hourly (24 steps/day)** not 15-min/96-step — README fully rewritten
+- [x] Save checkpoints/results inside the repo working tree by default (`checkpoints/`, `results/`) instead of Google Drive
 - [ ] Decide definitively whether to include the 22 high-consumption outlier meters in training or exclude them
 - [x] Add a `units` note to `loader.py` docstring (values in Wh/h, range 0–764,000; outlier decision rationale documented)
 - [x] Fix `metrics.py`: `acf_compare` nlags safeguard, `envelope_plot` steps_per_hour, `discriminative_score` class balance
@@ -161,7 +163,7 @@ Last updated: 2026-04-03
 - [x] Fix `diffusion.py` freq loss bug: target was `FFT(x0)`, corrected to `FFT(noise)`
 - [x] Git: rebased local commits on top of devcontainer commits; pushed to `origin/master` (HEAD: `ad92b4e`)
 - [x] Run `04_evaluation.ipynb` with 5-epoch checkpoint — discriminative acc 0.85–0.98 (expected; model not converged)
-- [ ] **Full GPU training**: set `QUICK_RUN = False` in nb 03, push to Colab, run ~200 epochs; expected discriminative acc ≤ 0.55
+- [ ] **Re-run full DDPM training**: set `QUICK_RUN = False` in nb 03, attach to Colab/GPU, run ~200 epochs with repo-local artifacts; expected discriminative acc ≤ 0.55
 - [ ] **Re-run `04_evaluation.ipynb`** after full training to get thesis-quality metrics
 
 ---
@@ -213,14 +215,14 @@ Before starting Phase B or the comparison framework, the following must be compl
 
 | Step | Action | Done? |
 |------|--------|-------|
-| B-gate 1 | Set `QUICK_RUN = False` in `03_diffusion_training.ipynb`, push to Colab/GPU | ⬜ |
+| B-gate 1 | Set `QUICK_RUN = False` in `03_diffusion_training.ipynb`, attach to Colab/GPU | ⬜ |
 | B-gate 2 | Run full ~200-epoch training; confirm loss converges (relative improvement < 2%/epoch) | ⬜ |
-| B-gate 3 | Save best checkpoint (`ckpt_epoch_best.pk` or highest-epoch file) | ⬜ |
+| B-gate 3 | Save best checkpoint as repo-local `checkpoints/best_model.pkl` | ⬜ |
 | B-gate 4 | Run `04_evaluation.ipynb` end-to-end with the full checkpoint | ⬜ |
 | B-gate 5 | Check discriminative accuracy ≤ 0.60 on all cluster×day_type conditions | ⬜ |
 | B-gate 6 | Inspect per-cluster loss curves (`trainer.cluster_losses`) — flag if any cluster diverges | ⬜ |
 | B-gate 7 | Visually inspect denormalised sample profiles vs real (§6 in nb 04) — shapes look plausible | ⬜ |
-| B-gate 8 | Export `evaluation_metrics.csv` and record baseline numbers in this todo | ⬜ |
+| B-gate 8 | Export repo-local `results/evaluation/evaluation_metrics.csv` and record baseline numbers in this todo | ⬜ |
 
 **Baseline numbers to record here after B-gate 8** (fill in after run):
 

@@ -20,7 +20,7 @@ Train a **Diffusion-TS** style model on a real Portuguese smart-meter dataset (3
 ## Model
 
 | Component | Detail |
-|---|---|
+| --- | --- |
 | Architecture | `DiffusionTransformer1D` — Transformer with AdaLN conditioning, trend+seasonality heads |
 | Diffusion | DDPM, cosine schedule, T=1000 |
 | Fast sampler | DDIM 50 steps |
@@ -32,7 +32,7 @@ Train a **Diffusion-TS** style model on a real Portuguese smart-meter dataset (3
 
 ## Project Structure
 
-```
+```text
 src/
   data/
     loader.py      # load_raw(), compute_stats(), normalize(), denormalize()
@@ -70,9 +70,57 @@ requirements.txt
 pip install -r requirements.txt
 ```
 
+## Artifact Policy
+
+- Checkpoints are written to `checkpoints/`
+- Notebook outputs and metric exports are written to `results/`
+- By default, notebooks do not redirect artifacts to Google Drive
+
+If you attach VS Code to a Colab GPU kernel, the repo-local path is typically
+`/content/tesina/...`. Those files live inside the runtime filesystem and must
+be copied out manually if you want to keep them after the session ends.
+
+If you download an exported bundle from Colab, place it under
+`results/exports/` in the local repo and restore it with:
+
+```bash
+python scripts/restore_export_bundle.py results/exports/<bundle-name>.tar.gz
+```
+
+Current bundle prefixes:
+
+- `ddpm_baseline_*.tar.gz` from `notebooks/03_diffusion_training.ipynb`
+- `rf_baseline_*.tar.gz` from `notebooks/03b_rectified_flow_training.ipynb`
+
+Notebook behavior after download:
+
+- `notebooks/04_evaluation.ipynb` auto-restores the latest DDPM bundle if `checkpoints/best_model.pkl` is missing
+- `notebooks/05_comparison.ipynb` auto-restores the latest DDPM and RF bundles if either checkpoint is missing
+
 ### GPU training (recommended)
 
 Use Google Colab with GPU runtime. Open `notebooks/00_colab_remote_kernel_setup.ipynb` **in Colab**, run it there to start a Jupyter server, then attach VS Code to the printed URL.
+
+For the DDPM baseline, run these notebooks in order:
+
+1. `notebooks/03_diffusion_training.ipynb` with `QUICK_RUN = False`
+2. `notebooks/04_evaluation.ipynb`
+
+For the RF baseline and side-by-side comparison:
+
+1. `notebooks/03b_rectified_flow_training.ipynb` with `QUICK_RUN = False`
+2. `notebooks/05_comparison.ipynb`
+
+Expected repo-local outputs:
+
+- `checkpoints/best_model.pkl`
+- `checkpoints/rf_best_model.pkl`
+- `results/diffusion/training_summary.json`
+- `results/rectified_flow/training_summary.json`
+- `results/evaluation/evaluation_metrics.csv`
+- `results/comparison/comparison_metrics.csv`
+- `results/exports/ddpm_baseline_*.tar.gz`
+- `results/exports/rf_baseline_*.tar.gz`
 
 ### Local CPU run (sanity check only)
 

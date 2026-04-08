@@ -468,6 +468,31 @@ def marginal_wasserstein(
     return float(np.mean(w1_per_step))
 
 
+def sample_condition_batch(
+    condition_rows: np.ndarray,
+    n_samples: int,
+    seed: Optional[int] = None,
+) -> np.ndarray:
+    """
+    Resample full conditioning rows from the empirical validation distribution.
+
+    This preserves the month/day-of-week mixture inside a broader
+    (cluster_id, day_type) slice, so evaluation compares like with like.
+    """
+    rows = np.asarray(condition_rows, dtype=np.int32)
+    if rows.ndim != 2 or rows.shape[1] != 4:
+        raise ValueError(f"Expected conditioning array of shape (N, 4); got {rows.shape}")
+    if len(rows) == 0:
+        raise ValueError("Cannot sample from an empty conditioning array")
+
+    rng = np.random.default_rng(seed)
+    replace = len(rows) < n_samples
+    indices = rng.choice(len(rows), size=n_samples, replace=replace)
+    batch = rows[indices].astype(np.int32, copy=False)
+    assert batch.shape == (n_samples, 4)
+    return batch
+
+
 # ---------------------------------------------------------------------------
 # Multi-model comparison framework
 # ---------------------------------------------------------------------------
@@ -486,6 +511,10 @@ def compare_models(
 ) -> Tuple["pd.DataFrame", dict]:
     """
     Unified multi-model comparison across all (cluster × day_type) conditions.
+
+    Synthetic batches are drawn using the empirical month/day-of-week mixture
+    observed inside each real condition slice, rather than a single fixed
+    representative calendar token.
 
     Parameters
     ----------
@@ -536,16 +565,16 @@ def compare_models(
             # Real windows for this condition
             mask = (conditions[:, 0] == cid) & (conditions[:, 1] == dt)
             real_cond = real_data[mask]
+            cond_rows = conditions[mask]
             if len(real_cond) < 10:
                 if verbose:
                     print(f"skipped (only {len(real_cond)} real samples)")
                 continue
 
-            # Build conditioning array — use month=5 (June), dow=1 (Tue)
-            # or 5 (Sat) for weekends as representative values
-            rep_dow = 1 if dt == 0 else 5
-            c_batch = np.array(
-                [[cid, dt, 5, rep_dow]] * n_samples, dtype=np.int32
+            c_batch = sample_condition_batch(
+                cond_rows,
+                n_samples,
+                seed=int(rng.integers(0, 2**31)),
             )
             key = rng.integers(0, 2**31)
 
@@ -571,6 +600,7 @@ def compare_models(
                 "condition":          cond_label,
                 "n_real":             len(real_cond),
                 "n_synthetic":        n_samples,
+                "n_empirical_meta":   int(len(np.unique(cond_rows[:, 2:], axis=0))),
                 "acf_l2":             acf_l2,
                 "crps":               crps,
                 "discriminative_acc": disc,

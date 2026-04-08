@@ -98,8 +98,8 @@ def make_windows(
             mid_list.append(meter_idx)
 
     xs = np.stack(xs_list, axis=0)                  # (N, 24)
-    cs = np.array(cs_list, dtype=np.int32)           # (N, 2)
-    mid = np.array(mid_list, dtype=np.int32)         # (N,)
+    cs = np.array(cs_list, dtype=np.int32)          # (N, 4)
+    mid = np.array(mid_list, dtype=np.int32)        # (N,)
     return xs, cs, mid
 
 
@@ -170,20 +170,94 @@ class _InfiniteLoader:
         return next(self._gen)
 
 
+class _BalancedInfiniteLoader:
+    """
+    Infinite iterator that approximately balances batches across selected
+    conditioning groups by resampling each group uniformly.
+    """
+
+    def __init__(
+        self,
+        xs: np.ndarray,
+        cs: np.ndarray,
+        batch_size: int,
+        balance_condition_cols: tuple[int, ...],
+        shuffle: bool,
+        rng: np.random.Generator,
+    ):
+        if len(balance_condition_cols) == 0:
+            raise ValueError("balance_condition_cols must not be empty")
+
+        grouped_indices: dict[tuple[int, ...], list[int]] = {}
+        for idx, row in enumerate(cs):
+            key = tuple(int(row[col]) for col in balance_condition_cols)
+            grouped_indices.setdefault(key, []).append(idx)
+
+        self.group_keys = sorted(grouped_indices)
+        self.grouped_indices = {
+            key: np.asarray(indices, dtype=np.int32)
+            for key, indices in grouped_indices.items()
+        }
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.rng = rng
+        self.xs = xs
+        self.cs = cs
+        self.epoch_len = max(1, len(xs) // batch_size)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        n_groups = len(self.group_keys)
+        base = self.batch_size // n_groups
+        remainder = self.batch_size % n_groups
+
+        batch_indices = []
+        for group_idx, key in enumerate(self.group_keys):
+            n_take = base + int(group_idx < remainder)
+            if n_take == 0:
+                continue
+
+            pool = self.grouped_indices[key]
+            sampled = self.rng.choice(pool, size=n_take, replace=len(pool) < n_take)
+            batch_indices.append(sampled)
+
+        batch_indices = np.concatenate(batch_indices, axis=0)
+        if self.shuffle:
+            self.rng.shuffle(batch_indices)
+
+        return self.xs[batch_indices], self.cs[batch_indices]
+
+
 def numpy_dataloader(
     xs: np.ndarray,
     cs: np.ndarray,
     batch_size: int,
     shuffle: bool = True,
+    balance_condition_cols: tuple[int, ...] | None = None,
     rng: int | np.random.Generator = 0,
-) -> "_InfiniteLoader":
+) -> "_InfiniteLoader | _BalancedInfiniteLoader":
     """
     Infinite iterator of (x_batch float32, c_batch int32) pairs.
     Reshuffles every pass through the data.
+
+    If ``balance_condition_cols`` is provided, batches are built by uniform
+    resampling over the unique groups defined by those conditioning columns.
+    In this project ``(0, 1)`` corresponds to ``(cluster_id, day_type)``.
 
     The returned object exposes ``epoch_len = len(xs) // batch_size`` so that
     ``Trainer.fit`` can automatically bound each epoch to one data pass.
     """
     if isinstance(rng, int):
         rng = np.random.default_rng(rng)
+    if balance_condition_cols is not None:
+        return _BalancedInfiniteLoader(
+            xs,
+            cs,
+            batch_size,
+            tuple(balance_condition_cols),
+            shuffle,
+            rng,
+        )
     return _InfiniteLoader(xs, cs, batch_size, shuffle, rng)

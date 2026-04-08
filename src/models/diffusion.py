@@ -173,7 +173,7 @@ class DiffusionProcess(eqx.Module):
     def ddpm_sample(
         self,
         model: eqx.Module,
-        c: jax.Array,           # (B, 2) int conditioning
+        c: jax.Array,           # (B, 4) int conditioning
         seq_len: int,
         batch_size: int,
         key: jax.Array,
@@ -221,7 +221,7 @@ class DiffusionProcess(eqx.Module):
     def ddim_sample(
         self,
         model: eqx.Module,
-        c: jax.Array,           # (B, 2) int
+        c: jax.Array,           # (B, 4) int
         seq_len: int,
         batch_size: int,
         key: jax.Array,

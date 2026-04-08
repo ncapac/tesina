@@ -49,7 +49,7 @@ def train_step(
     opt_state: optax.OptState,
     optimizer: optax.GradientTransformation,
     x0: jax.Array,               # (B, L) float32
-    c: jax.Array,                # (B, 2) int32
+    c: jax.Array,                # (B, 4) int32
     key: jax.Array,
     p_uncond: float = 0.15,
 ) -> Tuple[eqx.Module, optax.OptState, jax.Array]:

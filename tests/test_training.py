@@ -31,7 +31,7 @@ class TestTrainStep:
 
         B = 4
         x0 = jax.random.normal(jax.random.PRNGKey(1), (B, 24))
-        c = jnp.zeros((B, 2), dtype=jnp.int32)
+        c = jnp.zeros((B, 4), dtype=jnp.int32)
         key = jax.random.PRNGKey(2)
 
         model2, opt_state2, loss = train_step(model, diffusion, opt_state, optimizer, x0, c, key)
@@ -48,7 +48,7 @@ class TestTrainStep:
         opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
 
         x0 = jax.random.normal(jax.random.PRNGKey(3), (4, 24))
-        c = jnp.zeros((4, 2), dtype=jnp.int32)
+        c = jnp.zeros((4, 4), dtype=jnp.int32)
 
         leaves_before = jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_array))
 
@@ -70,7 +70,7 @@ class TestEvalStep:
 
         model, diffusion = _make_model_and_diffusion()
         x0 = jax.random.normal(jax.random.PRNGKey(5), (4, 24))
-        c = jnp.zeros((4, 2), dtype=jnp.int32)
+        c = jnp.zeros((4, 4), dtype=jnp.int32)
         key = jax.random.PRNGKey(6)
 
         loss = eval_step(model, diffusion, x0, c, key)
@@ -89,7 +89,7 @@ class TestTrainer:
 
         N = 32
         xs = np.random.randn(N, 24).astype(np.float32)
-        cs = np.zeros((N, 2), dtype=np.int32)
+        cs = np.zeros((N, 4), dtype=np.int32)
         train_loader = numpy_dataloader(xs, cs, batch_size=8, shuffle=True)
         val_loader   = numpy_dataloader(xs, cs, batch_size=8, shuffle=False)
 
