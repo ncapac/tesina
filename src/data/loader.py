@@ -194,6 +194,46 @@ def denormalize_batch(
     return arr * s
 
 
+def filter_outlier_meters(
+    df: pd.DataFrame,
+    cluster_labels: np.ndarray,
+    factor: float = 10.0,
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
+    """
+    Drop meters whose annual mean exceeds ``factor`` × the dataset-wide
+    median annual mean.
+
+    With ``factor=10`` on the Portuguese dataset this removes 22 of 321
+    meters (top offender: meter 313, ×339 the median).
+
+    Parameters
+    ----------
+    df             : (T, N_meters) DataFrame.
+    cluster_labels : (N_meters,) array of cluster ids, aligned with df columns.
+    factor         : multiplier on the median annual mean.
+
+    Returns
+    -------
+    (df_kept, cluster_labels_kept, kept_mask) where ``kept_mask`` is a
+    boolean array of shape (N_meters,) marking surviving columns.
+    """
+    cluster_labels = np.asarray(cluster_labels)
+    if cluster_labels.shape[0] != df.shape[1]:
+        raise ValueError(
+            f"cluster_labels has {cluster_labels.shape[0]} entries but df has "
+            f"{df.shape[1]} meters"
+        )
+
+    meter_means = np.nanmean(df.values.astype(np.float64), axis=0)
+    threshold = float(factor) * float(np.nanmedian(meter_means))
+    kept_mask = meter_means <= threshold
+
+    df_kept = df.iloc[:, kept_mask].copy()
+    df_kept.columns = pd.RangeIndex(df_kept.shape[1])
+    cluster_labels_kept = cluster_labels[kept_mask]
+    return df_kept, cluster_labels_kept, kept_mask
+
+
 def scales_array(stats: dict, meter_ids: np.ndarray) -> np.ndarray:
     """
     Lookup helper: gather per-sample scales for a vector of meter ids.

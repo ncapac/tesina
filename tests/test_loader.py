@@ -183,3 +183,42 @@ class TestNormalize:
         out = scales_array(stats, mids)
         expected = np.array([1, 2, 3, 4, 1, 4], dtype=np.float32)
         np.testing.assert_allclose(out, expected, rtol=1e-5)
+
+
+# ─── filter_outlier_meters ────────────────────────────────────────────────────
+
+class TestFilterOutlierMeters:
+    def test_drops_meters_above_threshold(self):
+        from src.data.loader import filter_outlier_meters
+
+        # 5 meters with means [1, 1, 1, 1, 100]; median = 1; factor=10 keeps
+        # only those <= 10.  Last column should be dropped.
+        cols = [
+            np.ones(24, dtype=np.float32) * v for v in (1.0, 1.0, 1.0, 1.0, 100.0)
+        ]
+        df = pd.DataFrame(np.stack(cols, axis=1))
+        cluster_labels = np.array([0, 0, 1, 1, 2])
+
+        df_kept, cl_kept, mask = filter_outlier_meters(df, cluster_labels, factor=10.0)
+        assert df_kept.shape == (24, 4)
+        assert mask.tolist() == [True, True, True, True, False]
+        np.testing.assert_array_equal(cl_kept, np.array([0, 0, 1, 1]))
+        # surviving columns are reindexed 0..3
+        assert list(df_kept.columns) == [0, 1, 2, 3]
+
+    def test_no_outliers_when_factor_large(self):
+        from src.data.loader import filter_outlier_meters
+
+        df = pd.DataFrame(np.ones((10, 3), dtype=np.float32))
+        cl = np.array([0, 1, 2])
+        df_kept, cl_kept, mask = filter_outlier_meters(df, cl, factor=100.0)
+        assert df_kept.shape == df.shape
+        assert mask.all()
+        np.testing.assert_array_equal(cl_kept, cl)
+
+    def test_mismatched_cluster_labels_raises(self):
+        from src.data.loader import filter_outlier_meters
+
+        df = pd.DataFrame(np.ones((5, 3), dtype=np.float32))
+        with pytest.raises(ValueError, match="cluster_labels"):
+            filter_outlier_meters(df, np.array([0, 1]))
