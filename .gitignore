@@ -14,32 +14,11 @@ build/
 venv/
 env/
 
-# Jupyter
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .ipynb_checkpoints/
-*.ipynb_checkpoints/
-
-# Large data files
-data/*.pkl
-data/*.h5
-data/*.hdf5
-
-# Checkpoints / model weights
-checkpoints/*
-!checkpoints/.gitkeep
-*.ckpt
-*.pt
-*.pth
-
-# Generated results
-results/*
-!results/.gitkeep
-!results/**/
-results/**/*
-!results/**/.gitkeep
-!results/**/*.csv
-!results/**/*.json
-
-
 
 # IDE
 .vscode/
@@ -48,3 +27,22 @@ results/**/*
 # OS
 .DS_Store
 Thumbs.db
+
+# Logs
+*.log
+*.tmp
+
+# ML artifacts (generated)
+output/
+!output/**/.gitkeep
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+*.tar.gz
+wandb/
+mlruns/
+lightning_logs/
+
+# Large data — tracked via external storage / download script
+data/*.pk

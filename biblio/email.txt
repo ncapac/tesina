@@ -1,0 +1,14 @@
+ Ciao Nicola, 
+scusa se non mi sono fatto sentire, oggi  ho provato a fare alucne prove sul tuo repo per la generazione di profili dei meters.
+
+    normalizzazione per meter - prima i profili erano normalizzati per cluster, il che rende l’apprendimento molto difficile perchè la scala dei profili nel cluster varia molto. Possiamo assumere di conoscere il consumo medio annuo per meter: normalizzo, traino su normalizzati e riscalo dopo l’inferenza del diffusion model.
+    ho tolto la parte FFT sul rumore, o meglio, l’ho tenuta ma sul profilo generato (match in frequenza profilo reale e ricostruito). Per il momento non l’ho attivata
+
+
+Non è incredibile il risultato ma almeno sono centrati i profili (vedi grafico sotto, righe=cluster, colonne=giorno della settimana). Ho trainato solo 5 epoche ma non mi sembrava stesse migliorando molto.
+Se vuoi creo un branch nuovo e pusho sul repo o anche su questo senza pietà. Sembra ci sia qualcosa che non quadra per cluster 2 particolarmente, ma guardo ancora un attimo. 
+
+Note pratiche: entro il 15 dovrei inviare una valutazione, quindi dovremmo cercare di andare un po’ avanti il prima possibile.
+
+A presto, 
+Lorenzo
