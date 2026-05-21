@@ -76,28 +76,50 @@ class TestComputeStats:
         rng = np.random.default_rng(0)
         return pd.DataFrame(rng.random((T, N)).astype(np.float32))
 
-    def test_returns_all_cluster_ids(self):
+    def test_returns_one_entry_per_meter(self):
+        from src.data.loader import compute_stats
+
+        df = self._make_df(T=100, N=6)
+        stats = compute_stats(df)
+        assert set(stats.keys()) == set(range(6))
+
+    def test_scale_positive(self):
+        from src.data.loader import compute_stats
+
+        df = self._make_df()
+        stats = compute_stats(df)
+        for i in stats:
+            assert stats[i]["scale"] > 0
+
+    def test_cluster_labels_ignored_for_backcompat(self):
+        """Old call signature with cluster_labels must still work."""
         from src.data.loader import compute_stats
 
         df = self._make_df()
         labels = np.array([0, 0, 1, 1, 2, 2])
-        stats = compute_stats(df, labels)
-        assert set(stats.keys()) == {0, 1, 2}
+        stats_a = compute_stats(df, labels)
+        stats_b = compute_stats(df)
+        # Same per-meter scales regardless of (now unused) labels
+        for i in stats_a:
+            assert stats_a[i]["scale"] == stats_b[i]["scale"]
 
-    def test_std_positive(self):
+    def test_scale_equals_column_mean(self):
         from src.data.loader import compute_stats
 
-        df = self._make_df()
-        labels = np.zeros(6, dtype=int)
-        stats = compute_stats(df, labels)
-        assert stats[0]["std"] > 0
+        rng = np.random.default_rng(2)
+        df = pd.DataFrame(rng.random((200, 4)).astype(np.float32) * 50 + 1.0)
+        stats = compute_stats(df)
+        expected = df.values.mean(axis=0)
+        for i in range(4):
+            assert abs(stats[i]["scale"] - expected[i]) < 1e-4
 
-    def test_no_labels_gives_single_cluster(self):
+    def test_zero_meter_uses_floor(self):
         from src.data.loader import compute_stats
 
-        df = self._make_df()
-        stats = compute_stats(df, None)
-        assert 0 in stats
+        df = pd.DataFrame(np.zeros((50, 3), dtype=np.float32))
+        stats = compute_stats(df)
+        for i in range(3):
+            assert stats[i]["scale"] >= 1e-8
 
 
 # ─── normalize / denormalize ──────────────────────────────────────────────────
@@ -107,16 +129,57 @@ class TestNormalize:
         from src.data.loader import compute_stats, normalize, denormalize
 
         rng = np.random.default_rng(1)
-        df = pd.DataFrame(rng.random((50, 4)).astype(np.float32) * 100)
-        labels = np.array([0, 0, 1, 1])
+        df = pd.DataFrame(rng.random((50, 4)).astype(np.float32) * 100 + 1.0)
 
-        stats = compute_stats(df, labels)
-        df_norm = normalize(df, stats, labels)
+        stats = compute_stats(df)
+        df_norm = normalize(df, stats)
 
-        # cluster-0 values should be ~z-scored
-        vals = df_norm.iloc[:, :2].values
-        assert abs(vals.mean()) < 1.0  # mean near 0
+        # Each column has mean ≈ 1 after dividing by its own mean
+        col_means = df_norm.values.mean(axis=0)
+        np.testing.assert_allclose(col_means, np.ones(4), rtol=1e-4)
 
-        # denormalize should recover original values
-        orig = denormalize(vals, 0, stats)
-        np.testing.assert_allclose(orig, df.iloc[:, :2].values, rtol=1e-4)
+        # denormalize per meter should recover original values
+        for i in range(4):
+            recovered = denormalize(df_norm.iloc[:, i].values, i, stats)
+            np.testing.assert_allclose(
+                recovered, df.iloc[:, i].values, rtol=1e-4
+            )
+
+    def test_normalize_preserves_shape(self):
+        from src.data.loader import compute_stats, normalize
+
+        df = pd.DataFrame(np.random.rand(20, 5).astype(np.float32))
+        stats = compute_stats(df)
+        df_norm = normalize(df, stats)
+        assert df_norm.shape == df.shape
+        assert df_norm.values.dtype == np.float32
+
+    def test_denormalize_batch_vector(self):
+        from src.data.loader import denormalize_batch
+
+        arr = np.ones((4, 24), dtype=np.float32)
+        scales = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
+        out = denormalize_batch(arr, scales)
+        assert out.shape == arr.shape
+        # Each row scaled by corresponding scale
+        for i, s in enumerate(scales):
+            np.testing.assert_allclose(out[i], np.full(24, s))
+
+    def test_denormalize_batch_scalar(self):
+        from src.data.loader import denormalize_batch
+
+        arr = np.ones((4, 24), dtype=np.float32)
+        out = denormalize_batch(arr, 2.5)
+        np.testing.assert_allclose(out, np.full((4, 24), 2.5))
+
+    def test_scales_array_lookup(self):
+        from src.data.loader import compute_stats, scales_array
+
+        df = pd.DataFrame(
+            np.tile(np.arange(1, 5, dtype=np.float32), (10, 1))
+        )  # column i has mean i+1
+        stats = compute_stats(df)
+        mids = np.array([0, 1, 2, 3, 0, 3], dtype=np.int32)
+        out = scales_array(stats, mids)
+        expected = np.array([1, 2, 3, 4, 1, 4], dtype=np.float32)
+        np.testing.assert_allclose(out, expected, rtol=1e-5)

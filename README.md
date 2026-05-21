@@ -12,7 +12,7 @@ Train a **Diffusion-TS** style model on a real Portuguese smart-meter dataset (3
 - **Resolution**: **hourly, 24 steps/day** (`STEPS_PER_DAY = 24`)
 - **Units**: Wh per hour (equivalent to average watts); values in [0, 764 000]
 - **Windows**: non-overlapping daily windows of 24 steps
-- **Outliers**: 22 meters with mean consumption > 10× dataset median (max ×339) remain in training; cluster-level normalisation handles the 3-order-of-magnitude scale range
+- **Outliers**: 22 meters with mean consumption > 10× dataset median (max ×339) remain in training. **Normalisation**: each meter is divided by its own annual mean (per-meter shape-only scaling, Lorenzo review). The diffusion model learns shape distributions; absolute scale is recovered at inference by multiplying samples by the target meter's known annual mean.
 - `data/clusters.csv` (tracked): 3-cluster K-Means result — 183 daytime-bell, 34 industrial, 104 evening-peak meters
 
 > `power.pk` is excluded from git (large file). Place it in `data/` before running.
@@ -27,7 +27,7 @@ Train a **Diffusion-TS** style model on a real Portuguese smart-meter dataset (3
 | Guidance | Classifier-Free Guidance, `guidance_scale=1.5` |
 | Conditioning | `c = [cluster_id, day_type, month, dow]` (shape 4, all int32) |
 | Null token | `c = [-1, -1, -1, -1]` (CFG unconditional pass) |
-| Loss | MSE noise + λ·FFT(pred vs noise), λ=0.05 |
+| Loss | MSE noise (default); optional λ·FFT(x̂₀ vs x₀) in data space, default off (`data_freq_loss_weight=0.0`) |
 | Parameters | ~846 k (d_model=128, 4 heads, 4 layers) |
 
 ## Project Structure
@@ -35,8 +35,8 @@ Train a **Diffusion-TS** style model on a real Portuguese smart-meter dataset (3
 ```text
 src/
   data/
-    loader.py      # load_raw(), compute_stats(), normalize(), denormalize()
-    dataset.py     # make_windows() → (N,24) xs, (N,4) cs; train_val_split()
+    loader.py      # load_raw(), compute_stats(), normalize(), denormalize(), denormalize_batch(), scales_array()
+    dataset.py     # make_windows() → (N,24) xs, (N,4) cs, (N,) mid; train_val_split() returns 6-tuple
   models/
     transformer1d.py   # DiffusionTransformer1D (Equinox)
     diffusion.py       # DiffusionProcess: schedule, q_sample, p_losses, DDIM, CFG
@@ -57,7 +57,7 @@ notebooks/
   03b_rectified_flow_training.ipynb  # RF training (mirrors 03)
   04_evaluation.ipynb       # Generate samples, full metric suite
   05_comparison.ipynb       # DDPM vs RF: metrics, ablations, thesis figures
-tests/                      # pytest — 53 tests covering all public APIs
+tests/                      # pytest — 66 tests covering all public APIs
 data/
 checkpoints/
 biblio/

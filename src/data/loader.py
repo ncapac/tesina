@@ -10,10 +10,11 @@ Data facts (Portuguese smart-meter dataset, 2012–2014)
   Units  : Wh per hour (equivalent to average W per hour);
            values in [0, ~764 000] across all meters.
   Outliers: 22 meters have mean > 10× dataset median (max ×339);
-            they are kept in training but isolated into their own
-            cluster naturally by the shape-normalised K-Means.
-            Per-cluster z-score normalisation in compute_stats()/
-            normalize() handles the 3-order-of-magnitude scale range.
+            they are kept in training. Per-meter scale normalisation
+            (division by the meter's annual mean) makes the diffusion
+            task purely about shape — scale is recovered at inference
+            time by multiplying by the target meter's known annual mean
+            (a scalar available in practice from billing data).
 
 Expected pickle structure (will be confirmed during EDA):
   - Either a pandas DataFrame  (meters as columns, DatetimeIndex)
@@ -21,9 +22,11 @@ Expected pickle structure (will be confirmed during EDA):
 
 Public API
 ----------
-load_raw(path)   -> pd.DataFrame  shape (T, N_meters)
-compute_stats(df, cluster_labels) -> dict  per-cluster mean/std
-normalize(df, stats)              -> pd.DataFrame  z-scored per cluster
+load_raw(path)                    -> pd.DataFrame  shape (T, N_meters)
+compute_stats(df)                 -> dict {meter_idx: {'scale': float}}
+normalize(df, stats)              -> pd.DataFrame  consumption / annual mean
+denormalize(arr, meter_id, stats) -> np.ndarray    arr * stats[meter_id]['scale']
+denormalize_batch(arr, scales)    -> np.ndarray    vectorised per-sample rescale
 """
 
 from __future__ import annotations
@@ -90,30 +93,30 @@ def compute_stats(
     cluster_labels: Optional[np.ndarray] = None,
 ) -> dict:
     """
-    Compute per-cluster (or global) mean and std for z-score normalisation.
+    Compute per-meter normalisation scale = annual mean consumption.
+
+    The diffusion model is trained on profiles divided by their meter's
+    annual mean, so the network only has to learn shape. Scale is
+    reintroduced at inference time by multiplying by a known target mean.
 
     Parameters
     ----------
     df : (T, N_meters) DataFrame
-    cluster_labels : (N_meters,) integer array or None
-        If None, treats all meters as one group.
+    cluster_labels : ignored — kept only for backward compatibility with
+                     older notebook code; per-meter scaling does not need
+                     cluster labels.
 
     Returns
     -------
-    stats : dict mapping cluster_id -> {'mean': float, 'std': float}
+    stats : dict mapping meter_idx (int, column position in df) ->
+            {'scale': float}.  Scale is floored to 1e-8 to protect against
+            all-zero meters.
     """
-    if cluster_labels is None:
-        cluster_labels = np.zeros(df.shape[1], dtype=int)
+    del cluster_labels  # accepted for back-compat; no longer used
 
-    stats: dict[int, dict] = {}
-    for cid in np.unique(cluster_labels):
-        mask = cluster_labels == cid
-        vals = df.iloc[:, mask].values.ravel()
-        stats[int(cid)] = {
-            "mean": float(np.nanmean(vals)),
-            "std": float(np.nanstd(vals) + 1e-8),
-        }
-    return stats
+    means = np.nanmean(df.values.astype(np.float64), axis=0)
+    scales = np.maximum(means, 1e-8)
+    return {int(i): {"scale": float(scales[i])} for i in range(df.shape[1])}
 
 
 def normalize(
@@ -122,33 +125,89 @@ def normalize(
     cluster_labels: Optional[np.ndarray] = None,
 ) -> pd.DataFrame:
     """
-    Z-score normalise each meter using its cluster statistics.
+    Divide each meter's consumption by its annual-mean scale.
 
     Parameters
     ----------
-    df            : (T, N_meters)
-    stats         : output of compute_stats
-    cluster_labels: (N_meters,) integer array or None (global normalisation)
+    df             : (T, N_meters) DataFrame
+    stats          : output of compute_stats — per-meter scales
+    cluster_labels : ignored — kept for backward compatibility.
 
     Returns
     -------
-    normalised DataFrame, same shape as df
+    Normalised DataFrame, same shape as df. Each column has empirical
+    mean ≈ 1.0 (exactly 1.0 in the no-NaN case).
     """
-    if cluster_labels is None:
-        cluster_labels = np.zeros(df.shape[1], dtype=int)
+    del cluster_labels  # back-compat
 
-    out = df.copy()
-    for cid, s in stats.items():
-        mask = cluster_labels == cid
-        out.iloc[:, mask] = (df.iloc[:, mask].values - s["mean"]) / s["std"]
-    return out
+    n = df.shape[1]
+    scales = np.array(
+        [stats[int(i)]["scale"] for i in range(n)], dtype=np.float32
+    )
+    arr = df.values.astype(np.float32) / scales[None, :]
+    return pd.DataFrame(arr, index=df.index, columns=df.columns)
 
 
 def denormalize(
     arr: np.ndarray,
-    cluster_id: int,
+    meter_id: int,
     stats: dict,
 ) -> np.ndarray:
-    """Invert z-score for a batch of samples from a given cluster."""
-    s = stats[cluster_id]
-    return arr * s["std"] + s["mean"]
+    """
+    Invert per-meter normalisation for a batch from a single meter.
+
+    Parameters
+    ----------
+    arr      : array of any shape (last axis = time)
+    meter_id : column index of the meter in the original DataFrame
+    stats    : output of compute_stats
+
+    Returns
+    -------
+    arr * stats[meter_id]['scale']
+    """
+    s = stats[int(meter_id)]["scale"]
+    return arr * np.float32(s)
+
+
+def denormalize_batch(
+    arr: np.ndarray,
+    scales: np.ndarray | float,
+) -> np.ndarray:
+    """
+    Vectorised denormalisation when each sample in ``arr`` has its own
+    scale (e.g. after the generator produces N profiles, each tagged
+    with a target annual mean drawn from the empirical distribution).
+
+    Parameters
+    ----------
+    arr    : shape (B, L) or (B,)
+    scales : scalar, or array broadcastable along the leading axis of arr.
+
+    Returns
+    -------
+    arr scaled element-wise along the batch dimension.
+    """
+    s = np.asarray(scales, dtype=np.float32)
+    if arr.ndim == 2 and s.ndim == 1:
+        return arr * s[:, None]
+    return arr * s
+
+
+def scales_array(stats: dict, meter_ids: np.ndarray) -> np.ndarray:
+    """
+    Lookup helper: gather per-sample scales for a vector of meter ids.
+
+    Parameters
+    ----------
+    stats     : output of compute_stats
+    meter_ids : (N,) int array of meter column indices (e.g. ``mid`` from
+                ``make_windows``)
+
+    Returns
+    -------
+    (N,) float32 array of per-sample scales.
+    """
+    return np.array(
+        [stats[int(i)]["scale"] for i in meter_ids], dtype=np.float32
+    )

@@ -161,6 +161,8 @@ Last updated: 2026-04-03
 - [x] Fix `metrics.py`: `acf_compare` nlags safeguard, `envelope_plot` steps_per_hour, `discriminative_score` class balance
 - [x] Fix `metrics.py` additional improvements: ACF Bartlett 95% CI bands, meaningful KDE hourly bins (Night/Morning/Afternoon/Evening), `sample_diversity_plot()`, `per_timestep_stddev_plot()`, `correlation_heatmap()`, `run_all_metrics()` 3-row layout
 - [x] Fix `diffusion.py` freq loss bug: target was `FFT(x0)`, corrected to `FFT(noise)`
+- [x] **Lorenzo review (2026-04)**: replace per-cluster z-score with per-meter annual-mean normalisation (`x / annual_mean_meter`). Diffusion learns shape only; scale recovered at inference by multiplying by target meter's known annual mean. `compute_stats`, `normalize`, `denormalize` rewritten; new helpers `denormalize_batch`, `scales_array`; `train_val_split` now returns 6-tuple with meter ids; notebooks 03/03b/04/05 updated with scale-resampling protocol for synthetic samples
+- [x] **Lorenzo review (2026-04)**: remove broken `FFT(eps_pred) vs FFT(noise)` term from DDPM loss (white-spectrum bias, redundant with MSE via Parseval). New optional `data_freq_loss_weight` (default 0.0) targets `FFT(x\u0302\u2080) vs FFT(x\u2080)` in data space; RF `freq_loss_weight` default also set to 0.0
 - [x] Git: rebased local commits on top of devcontainer commits; pushed to `origin/master` (HEAD: `ad92b4e`)
 - [x] Run `04_evaluation.ipynb` with 5-epoch checkpoint — discriminative acc 0.85–0.98 (expected; model not converged)
 - [ ] **Re-run full DDPM training**: set `QUICK_RUN = False` in nb 03, attach to Colab/GPU, run ~200 epochs with repo-local artifacts; expected discriminative acc ≤ 0.55

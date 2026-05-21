@@ -27,9 +27,9 @@ def _tiny_model(seq_len=24, d_model=32, n_heads=2, n_layers=2, n_clusters=3):
     )
 
 
-def _tiny_diffusion(T=10):
+def _tiny_diffusion(T=10, data_freq_loss_weight=0.05):
     from src.models.diffusion import DiffusionProcess
-    return DiffusionProcess(T=T, freq_loss_weight=0.05)
+    return DiffusionProcess(T=T, data_freq_loss_weight=data_freq_loss_weight)
 
 
 # ─── Transformer ──────────────────────────────────────────────────────────────

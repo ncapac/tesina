@@ -67,11 +67,11 @@ class DiffusionProcess(eqx.Module):
     log_one_minus_acp: jax.Array
     sqrt_recip_acp: jax.Array
     posterior_variance: jax.Array  # β̃_t = β_t * (1-ᾱ_{t-1}) / (1-ᾱ_t)
-    freq_loss_weight: float
+    data_freq_loss_weight: float
 
-    def __init__(self, T: int = 1000, freq_loss_weight: float = 0.05):
+    def __init__(self, T: int = 1000, data_freq_loss_weight: float = 0.0):
         self.T = T
-        self.freq_loss_weight = freq_loss_weight
+        self.data_freq_loss_weight = data_freq_loss_weight
 
         betas = cosine_beta_schedule(T)
         alphas = 1.0 - betas
@@ -115,12 +115,19 @@ class DiffusionProcess(eqx.Module):
         self,
         model: eqx.Module,
         x0: jax.Array,          # (B, L)
-        c: jax.Array,           # (B, 2) int; may be null [-1,-1] via CFG
+        c: jax.Array,           # (B, 4) int; may be null [-1,-1,-1,-1] via CFG
         t: jax.Array,           # (B,)   int diffusion steps
         key: jax.Array,
     ) -> jax.Array:
         """
-        Loss = MSE(ε, ε_θ) + λ · ‖FFT(ε_θ) - FFT(x0)‖²
+        Loss = MSE(ε, ε_θ)  +  λ · ‖|FFT(x̂_0)| - |FFT(x_0)|‖²
+
+        The optional spectral term operates in *data space* — it compares
+        the model's implicit ``x̂_0 = (x_t − √(1−ᾱ_t)·ε_θ) / √ᾱ_t`` against
+        the true ``x_0``. This regularises the generator to match the
+        frequency content of real profiles (e.g. diurnal harmonics) rather
+        than the spectrum of Gaussian noise. Disabled by default
+        (``data_freq_loss_weight=0.0``); kept as an ablation knob.
 
         Returns scalar loss.
         """
@@ -133,13 +140,15 @@ class DiffusionProcess(eqx.Module):
         # MSE noise loss
         mse = jnp.mean((noise - eps_pred) ** 2)
 
-        # Frequency loss: compare magnitude spectra of noise prediction vs actual noise
-        # (regularises the model to match the temporal-frequency structure of Gaussian noise)
-        fft_pred  = jnp.abs(jnp.fft.rfft(eps_pred, axis=-1))
-        fft_noise = jnp.abs(jnp.fft.rfft(noise,    axis=-1))
-        freq_loss = jnp.mean((fft_pred - fft_noise) ** 2)
+        # Data-space spectral fidelity term (disabled by default).
+        sqrt_recip_t = self.sqrt_recip_acp[t][..., None]
+        sqrt_1macp_t = self.sqrt_one_minus_acp[t][..., None]
+        x0_pred = sqrt_recip_t * (x_t - sqrt_1macp_t * eps_pred)
+        fft_pred = jnp.abs(jnp.fft.rfft(x0_pred, axis=-1))
+        fft_data = jnp.abs(jnp.fft.rfft(x0,      axis=-1))
+        freq_loss = jnp.mean((fft_pred - fft_data) ** 2)
 
-        return mse + self.freq_loss_weight * freq_loss
+        return mse + self.data_freq_loss_weight * freq_loss
 
     # ------------------------------------------------------------------
     # CFG noise prediction

@@ -16,7 +16,7 @@ def _make_model_and_diffusion():
         seq_len=24, d_model=32, n_heads=2, n_layers=2, d_ff=64,
         n_clusters=3, n_day_types=2, key=jax.random.PRNGKey(0),
     )
-    diffusion = DiffusionProcess(T=10, freq_loss_weight=0.05)
+    diffusion = DiffusionProcess(T=10, data_freq_loss_weight=0.05)
     return model, diffusion
 
 

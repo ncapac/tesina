@@ -48,7 +48,7 @@ class RectifiedFlowProcess(eqx.Module):
     """
     freq_loss_weight: float
 
-    def __init__(self, freq_loss_weight: float = 0.05):
+    def __init__(self, freq_loss_weight: float = 0.0):
         self.freq_loss_weight = freq_loss_weight
 
     # ------------------------------------------------------------------

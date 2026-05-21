@@ -93,34 +93,41 @@ class TestTrainValSplit:
         labels = (np.arange(n_meters) % 3).astype(int)
         return make_windows(df, labels, df.index)
 
-    def test_flat_four_tuple_return(self):
+    def test_flat_six_tuple_return(self):
         xs, cs, mid = self._make_windows()
         result = train_val_split(xs, cs, mid, n_meters=20)
-        # Must unpack into exactly 4 arrays
-        x_tr, c_tr, x_val, c_val = result
+        # Must unpack into exactly 6 arrays
+        x_tr, c_tr, mid_tr, x_val, c_val, mid_val = result
+        assert x_tr.shape[0] == c_tr.shape[0] == mid_tr.shape[0]
+        assert x_val.shape[0] == c_val.shape[0] == mid_val.shape[0]
 
     def test_sizes_sum_to_total(self):
         xs, cs, mid = self._make_windows()
-        x_tr, c_tr, x_val, c_val = train_val_split(xs, cs, mid, n_meters=20)
+        x_tr, c_tr, mid_tr, x_val, c_val, mid_val = train_val_split(
+            xs, cs, mid, n_meters=20
+        )
         assert x_tr.shape[0] + x_val.shape[0] == xs.shape[0]
 
     def test_val_fraction_respected(self):
         xs, cs, mid = self._make_windows(n_meters=20, n_days=100)
-        _, _, x_val, _ = train_val_split(xs, cs, mid, n_meters=20, val_fraction=0.15)
+        _, _, _, x_val, _, _ = train_val_split(
+            xs, cs, mid, n_meters=20, val_fraction=0.15
+        )
         # Val should be ~15% of windows (test within 20% relative tolerance)
         frac = x_val.shape[0] / xs.shape[0]
         assert 0.05 < frac < 0.35
 
-    def test_no_overlap_between_splits(self):
-        """Windows from the same meter must not appear in both splits."""
+    def test_no_meter_in_both_splits(self):
+        """Meters in the val split must not appear in the train split."""
         xs, cs, mid = self._make_windows(n_meters=20, n_days=30)
-        x_tr, c_tr, x_val, c_val = train_val_split(xs, cs, mid, n_meters=20)
-        tr_idx = set(mid[: x_tr.shape[0]])  # this doesn't work correctly, use mid mask
-        # Rebuild masks
-        _, _, _, _ = train_val_split(xs, cs, mid, n_meters=20)  # run once more for consistency
-        # Both sets must have at least 1 window
-        assert x_tr.shape[0] > 0
-        assert x_val.shape[0] > 0
+        x_tr, c_tr, mid_tr, x_val, c_val, mid_val = train_val_split(
+            xs, cs, mid, n_meters=20
+        )
+        tr_meters = set(mid_tr.tolist())
+        val_meters = set(mid_val.tolist())
+        assert tr_meters.isdisjoint(val_meters)
+        assert len(tr_meters) > 0
+        assert len(val_meters) > 0
 
 
 # ─── numpy_dataloader ─────────────────────────────────────────────────────────
