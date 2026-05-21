@@ -33,8 +33,6 @@ Thumbs.db
 *.tmp
 
 # ML artifacts (generated)
-output/
-!output/**/.gitkeep
 *.ckpt
 *.pt
 *.pth
