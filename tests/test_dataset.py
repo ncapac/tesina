@@ -99,6 +99,15 @@ class TestTrainValSplit:
         # Must unpack into exactly 4 arrays
         x_tr, c_tr, x_val, c_val = result
 
+    def test_optional_meter_indices_return(self):
+        xs, cs, mid = self._make_windows()
+        result = train_val_split(xs, cs, mid, n_meters=20, return_mid=True)
+        x_tr, c_tr, mid_tr, x_val, c_val, mid_val = result
+
+        assert x_tr.shape[0] == c_tr.shape[0] == mid_tr.shape[0]
+        assert x_val.shape[0] == c_val.shape[0] == mid_val.shape[0]
+        assert set(mid_tr.tolist()).isdisjoint(set(mid_val.tolist()))
+
     def test_sizes_sum_to_total(self):
         xs, cs, mid = self._make_windows()
         x_tr, c_tr, x_val, c_val = train_val_split(xs, cs, mid, n_meters=20)

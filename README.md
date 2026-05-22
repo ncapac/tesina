@@ -35,7 +35,7 @@ Train a **Diffusion-TS** style model on a real Portuguese smart-meter dataset (3
 ```text
 src/
   data/
-    loader.py      # load_raw(), compute_stats(), normalize(), denormalize()
+    loader.py      # load_raw(), cluster and per-meter normalise/denormalise helpers
     dataset.py     # make_windows() → (N,24) xs, (N,4) cs; train_val_split()
   models/
     transformer1d.py   # DiffusionTransformer1D (Equinox)
@@ -69,6 +69,20 @@ requirements.txt
 ```bash
 pip install -r requirements.txt
 ```
+
+## Current Experiment Notes
+
+- DDPM training now uses **per-meter z-score normalisation**:
+  `compute_meter_stats(df)` and `normalize_by_meter(df, stats)`.
+- Generated normalised profiles can be mapped back to Wh deterministically with
+  `denormalize_by_meter(samples, meter_indices, stats)`, using the selected
+  household's long-period mean and standard deviation.
+- The old per-cluster normalisation helpers are still available for comparison,
+  but they are no longer used by the DDPM training/evaluation notebooks.
+- The diffusion FFT auxiliary loss is now **off by default**
+  (`freq_loss_weight=0.0`). If re-enabled, it compares spectra of reconstructed
+  clean profiles (`x0_pred`) against real profiles, not spectra of Gaussian
+  noise.
 
 ## Artifact Policy
 

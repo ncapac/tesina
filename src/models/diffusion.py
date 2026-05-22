@@ -69,7 +69,7 @@ class DiffusionProcess(eqx.Module):
     posterior_variance: jax.Array  # β̃_t = β_t * (1-ᾱ_{t-1}) / (1-ᾱ_t)
     freq_loss_weight: float
 
-    def __init__(self, T: int = 1000, freq_loss_weight: float = 0.05):
+    def __init__(self, T: int = 1000, freq_loss_weight: float = 0.0):
         self.T = T
         self.freq_loss_weight = freq_loss_weight
 
@@ -120,7 +120,11 @@ class DiffusionProcess(eqx.Module):
         key: jax.Array,
     ) -> jax.Array:
         """
-        Loss = MSE(ε, ε_θ) + λ · ‖FFT(ε_θ) - FFT(x0)‖²
+        Loss = MSE(ε, ε_θ).
+
+        If ``freq_loss_weight > 0``, adds an optional profile-domain spectral
+        loss: λ · ‖|FFT(x̂0)| - |FFT(x0)|‖², where x̂0 is reconstructed from
+        the predicted noise at timestep t.
 
         Returns scalar loss.
         """
@@ -133,11 +137,18 @@ class DiffusionProcess(eqx.Module):
         # MSE noise loss
         mse = jnp.mean((noise - eps_pred) ** 2)
 
-        # Frequency loss: compare magnitude spectra of noise prediction vs actual noise
-        # (regularises the model to match the temporal-frequency structure of Gaussian noise)
-        fft_pred  = jnp.abs(jnp.fft.rfft(eps_pred, axis=-1))
-        fft_noise = jnp.abs(jnp.fft.rfft(noise,    axis=-1))
-        freq_loss = jnp.mean((fft_pred - fft_noise) ** 2)
+        if self.freq_loss_weight == 0.0:
+            return mse
+
+        # Optional frequency loss in profile space. This regularises the
+        # reconstructed clean load profile, not the injected Gaussian noise.
+        sqrt_acp_t = self.sqrt_acp[t][..., None]
+        sqrt_1macp_t = self.sqrt_one_minus_acp[t][..., None]
+        x0_pred = (x_t - sqrt_1macp_t * eps_pred) / sqrt_acp_t
+
+        fft_pred = jnp.abs(jnp.fft.rfft(x0_pred, axis=-1))
+        fft_x0 = jnp.abs(jnp.fft.rfft(x0, axis=-1))
+        freq_loss = jnp.mean((fft_pred - fft_x0) ** 2)
 
         return mse + self.freq_loss_weight * freq_loss
 

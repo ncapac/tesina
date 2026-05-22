@@ -12,8 +12,8 @@ Data facts (Portuguese smart-meter dataset, 2012–2014)
   Outliers: 22 meters have mean > 10× dataset median (max ×339);
             they are kept in training but isolated into their own
             cluster naturally by the shape-normalised K-Means.
-            Per-cluster z-score normalisation in compute_stats()/
-            normalize() handles the 3-order-of-magnitude scale range.
+            Prefer per-meter z-score normalisation for generation so each
+            household's long-period scale can be restored deterministically.
 
 Expected pickle structure (will be confirmed during EDA):
   - Either a pandas DataFrame  (meters as columns, DatetimeIndex)
@@ -24,6 +24,8 @@ Public API
 load_raw(path)   -> pd.DataFrame  shape (T, N_meters)
 compute_stats(df, cluster_labels) -> dict  per-cluster mean/std
 normalize(df, stats)              -> pd.DataFrame  z-scored per cluster
+compute_meter_stats(df)           -> dict  per-meter mean/std arrays
+normalize_by_meter(df, stats)     -> pd.DataFrame  z-scored per meter
 """
 
 from __future__ import annotations
@@ -152,3 +154,68 @@ def denormalize(
     """Invert z-score for a batch of samples from a given cluster."""
     s = stats[cluster_id]
     return arr * s["std"] + s["mean"]
+
+
+def compute_meter_stats(df: pd.DataFrame) -> dict:
+    """
+    Compute long-period mean/std for each meter column.
+
+    This is the preferred normalisation for generative modelling in this
+    project: the model learns shape in per-household z-score space, then
+    generated profiles are mapped back to Wh with the same meter's scale.
+
+    Returns
+    -------
+    stats : dict with keys ``mode``, ``mean``, ``std``, ``meter_ids``.
+    """
+    mean = np.nanmean(df.values, axis=0).astype(np.float32)
+    std = (np.nanstd(df.values, axis=0) + 1e-8).astype(np.float32)
+    return {
+        "mode": "meter",
+        "mean": mean,
+        "std": std,
+        "meter_ids": list(df.columns),
+    }
+
+
+def normalize_by_meter(df: pd.DataFrame, stats: dict) -> pd.DataFrame:
+    """
+    Z-score normalise each meter with its own long-period mean/std.
+    """
+    if stats.get("mode") != "meter":
+        raise ValueError("normalize_by_meter expects stats from compute_meter_stats()")
+    out = df.copy()
+    out.iloc[:, :] = (df.values - stats["mean"][None, :]) / stats["std"][None, :]
+    return out
+
+
+def denormalize_by_meter(
+    arr: np.ndarray,
+    meter_indices: np.ndarray | int,
+    stats: dict,
+) -> np.ndarray:
+    """
+    Invert per-meter z-score normalisation for generated or real windows.
+
+    Parameters
+    ----------
+    arr : array, shape (N, L) or (L,)
+        Normalised profile(s).
+    meter_indices : array shape (N,) or int
+        Meter column index used to choose the matching long-period scale.
+    stats : output of compute_meter_stats
+    """
+    if stats.get("mode") != "meter":
+        raise ValueError("denormalize_by_meter expects stats from compute_meter_stats()")
+
+    values = np.asarray(arr)
+    meter_indices = np.asarray(meter_indices, dtype=np.int32)
+
+    if values.ndim == 1:
+        mean = stats["mean"][int(meter_indices)]
+        std = stats["std"][int(meter_indices)]
+        return values * std + mean
+
+    mean = stats["mean"][meter_indices][:, None]
+    std = stats["std"][meter_indices][:, None]
+    return values * std + mean

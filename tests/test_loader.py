@@ -120,3 +120,23 @@ class TestNormalize:
         # denormalize should recover original values
         orig = denormalize(vals, 0, stats)
         np.testing.assert_allclose(orig, df.iloc[:, :2].values, rtol=1e-4)
+
+    def test_per_meter_roundtrip(self):
+        from src.data.loader import (
+            compute_meter_stats,
+            normalize_by_meter,
+            denormalize_by_meter,
+        )
+
+        rng = np.random.default_rng(2)
+        df = pd.DataFrame(rng.random((50, 4)).astype(np.float32) * [10, 100, 1000, 5])
+
+        stats = compute_meter_stats(df)
+        df_norm = normalize_by_meter(df, stats)
+
+        np.testing.assert_allclose(df_norm.mean(axis=0).values, 0, atol=1e-5)
+        np.testing.assert_allclose(df_norm.std(axis=0, ddof=0).values, 1, atol=1e-5)
+
+        vals = df_norm.iloc[:3, [0, 2]].values.T
+        orig = denormalize_by_meter(vals, np.array([0, 2]), stats)
+        np.testing.assert_allclose(orig, df.iloc[:3, [0, 2]].values.T, rtol=1e-4)
