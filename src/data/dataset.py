@@ -111,17 +111,14 @@ def train_val_split(
     n_meters: int,
     val_fraction: float = 0.15,
     seed: int = 42,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    return_mid: bool = False,
+) -> tuple[np.ndarray, ...]:
     """
     Stratified split by meter — val meters are held out entirely.
     This avoids leakage between train and val.
 
-    Returns
-    -------
-    (xs_tr, cs_tr, mid_tr, xs_va, cs_va, mid_va)
-
-    ``mid_*`` is returned so the caller can derive per-sample
-    normalisation scales via ``loader.scales_array(stats, mid_*)``.
+    Always returns ``x_tr, c_tr, mid_tr, x_val, c_val, mid_val``.
+    The ``return_mid`` parameter is accepted for API compatibility.
     """
     rng = np.random.default_rng(seed)
     all_meters = np.arange(n_meters)
@@ -133,8 +130,12 @@ def train_val_split(
     tr_mask = ~val_mask
 
     return (
-        xs[tr_mask], cs[tr_mask], mid[tr_mask],
-        xs[val_mask], cs[val_mask], mid[val_mask],
+        xs[tr_mask],
+        cs[tr_mask],
+        mid[tr_mask],
+        xs[val_mask],
+        cs[val_mask],
+        mid[val_mask],
     )
 
 

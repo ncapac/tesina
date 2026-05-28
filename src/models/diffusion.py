@@ -123,7 +123,7 @@ class DiffusionProcess(eqx.Module):
         Loss = MSE(ε, ε_θ)  +  λ · ‖|FFT(x̂_0)| - |FFT(x_0)|‖²
 
         The optional spectral term operates in *data space* — it compares
-        the model's implicit ``x̂_0 = (x_t − √(1−ᾱ_t)·ε_θ) / √ᾱ_t`` against
+        the model's implicit ``x̂_0 = (x_t − √(1−ā_t)·ε_θ) / √ā_t`` against
         the true ``x_0``. This regularises the generator to match the
         frequency content of real profiles (e.g. diurnal harmonics) rather
         than the spectrum of Gaussian noise. Disabled by default

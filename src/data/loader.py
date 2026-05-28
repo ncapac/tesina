@@ -27,6 +27,11 @@ compute_stats(df)                 -> dict {meter_idx: {'scale': float}}
 normalize(df, stats)              -> pd.DataFrame  consumption / annual mean
 denormalize(arr, meter_id, stats) -> np.ndarray    arr * stats[meter_id]['scale']
 denormalize_batch(arr, scales)    -> np.ndarray    vectorised per-sample rescale
+scales_array(stats, meter_ids)    -> np.ndarray    gather per-sample scales
+filter_outlier_meters(df, ...)    -> (df, labels, mask)
+compute_meter_stats(df)           -> dict  per-meter mean/std arrays
+normalize_by_meter(df, stats)     -> pd.DataFrame  z-scored per meter
+denormalize_by_meter(arr, ...)    -> np.ndarray    invert per-meter z-score
 """
 
 from __future__ import annotations
@@ -251,3 +256,68 @@ def scales_array(stats: dict, meter_ids: np.ndarray) -> np.ndarray:
     return np.array(
         [stats[int(i)]["scale"] for i in meter_ids], dtype=np.float32
     )
+
+
+def compute_meter_stats(df: pd.DataFrame) -> dict:
+    """
+    Compute long-period mean/std for each meter column.
+
+    This is the preferred normalisation for generative modelling in this
+    project: the model learns shape in per-household z-score space, then
+    generated profiles are mapped back to Wh with the same meter's scale.
+
+    Returns
+    -------
+    stats : dict with keys ``mode``, ``mean``, ``std``, ``meter_ids``.
+    """
+    mean = np.nanmean(df.values, axis=0).astype(np.float32)
+    std = (np.nanstd(df.values, axis=0) + 1e-8).astype(np.float32)
+    return {
+        "mode": "meter",
+        "mean": mean,
+        "std": std,
+        "meter_ids": list(df.columns),
+    }
+
+
+def normalize_by_meter(df: pd.DataFrame, stats: dict) -> pd.DataFrame:
+    """
+    Z-score normalise each meter with its own long-period mean/std.
+    """
+    if stats.get("mode") != "meter":
+        raise ValueError("normalize_by_meter expects stats from compute_meter_stats()")
+    out = df.copy()
+    out.iloc[:, :] = (df.values - stats["mean"][None, :]) / stats["std"][None, :]
+    return out
+
+
+def denormalize_by_meter(
+    arr: np.ndarray,
+    meter_indices: np.ndarray | int,
+    stats: dict,
+) -> np.ndarray:
+    """
+    Invert per-meter z-score normalisation for generated or real windows.
+
+    Parameters
+    ----------
+    arr : array, shape (N, L) or (L,)
+        Normalised profile(s).
+    meter_indices : array shape (N,) or int
+        Meter column index used to choose the matching long-period scale.
+    stats : output of compute_meter_stats
+    """
+    if stats.get("mode") != "meter":
+        raise ValueError("denormalize_by_meter expects stats from compute_meter_stats()")
+
+    values = np.asarray(arr)
+    meter_indices = np.asarray(meter_indices, dtype=np.int32)
+
+    if values.ndim == 1:
+        mean = stats["mean"][int(meter_indices)]
+        std = stats["std"][int(meter_indices)]
+        return values * std + mean
+
+    mean = stats["mean"][meter_indices][:, None]
+    std = stats["std"][meter_indices][:, None]
+    return values * std + mean

@@ -44,3 +44,5 @@ lightning_logs/
 
 # Large data — tracked via external storage / download script
 data/*.pk
+data/*.p
+data/*.zip
