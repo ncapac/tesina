@@ -1,0 +1,26 @@
+{
+  "model": "HistoricalBaseline",
+  "parametric": false,
+  "train_instances": 7440,
+  "val_instances": 1488,
+  "n_clusters": 5,
+  "c_discrete": [
+    "cluster_id",
+    "day_type",
+    "season"
+  ],
+  "c_continuous": [
+    "temp_normed",
+    "log_mean_z",
+    "log_std_z"
+  ],
+  "temp_tol": 0.5,
+  "min_pool": 5,
+  "metrics": {
+    "mae_kw": 15.429500579833984,
+    "rmse_kw": 19.816059112548828,
+    "daily_energy_mape": 0.4431801438331604
+  },
+  "random_seed": 42,
+  "val_fraction": 0.15
+}

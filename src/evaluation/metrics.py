@@ -5,16 +5,16 @@ Evaluation metrics for comparing real vs. synthetic energy load profiles.
 
 Metrics
 -------
-  acf_compare          — ACF/PACF comparison (plots + scalar L2 distance)
-  marginal_kde         — KDE overlay per time bin (peak / shoulder / night)
-  crps_score           — Continuous Ranked Probability Score (probabilistic quality)
-  discriminative_score — Train a 1D-conv real/fake classifier; accuracy ≈ 50% = ideal
-  envelope_plot        — Mean ± std envelope comparison
+  acf_compare              — ACF/PACF comparison (plots + scalar L2 distance)
+  marginal_kde             — KDE overlay per time bin (peak / shoulder / night)
+  crps_score               — Continuous Ranked Probability Score (probabilistic quality)
+  spectral_frechet_distance — Fréchet distance in FFT magnitude space (12 harmonics)
+  envelope_plot            — Mean ± std envelope comparison
 
 References
 ----------
   CRPS:  eq. 57 in arXiv 2507.14507 (Su et al., 2025)
-  Discriminative score: popularised by TimeGAN (Yoon et al., 2019)
+  Spectral Fréchet: Fréchet inception distance applied to FFT spectra
 """
 
 from __future__ import annotations
@@ -283,55 +283,78 @@ def crps_score(
 
 
 # ---------------------------------------------------------------------------
-# Discriminative score (real/fake classifier)
+# Spectral Fréchet Distance
 # ---------------------------------------------------------------------------
 
-def discriminative_score(
-    real: np.ndarray,       # (N_real,  L)
-    synthetic: np.ndarray,  # (N_syn,   L)
-    n_epochs: int = 30,
-    seed: int = 0,
+def spectral_frechet_distance(
+    real: np.ndarray,       # (N_real, L)
+    synthetic: np.ndarray,  # (N_syn,  L)
+    n_harmonics: int = 12,  # number of FFT harmonics to use (skip DC bin 0)
 ) -> float:
     """
-    Train a lightweight 1-D conv classifier to distinguish real from synthetic.
-    Returns test accuracy; ideal = 0.5 (indistinguishable distributions).
+    Fréchet distance computed in the FFT magnitude spectrum space.
 
-    Uses scikit-learn's MLPClassifier as a simple baseline discriminator.
-    The two classes are balanced by subsampling the majority class so that
-    the score is not dominated by class imbalance.
+    For each sample x of length L, compute the magnitude spectrum
+    S(x) = |FFT(x)|[1 : n_harmonics+1]  (skipping the DC component).
+    Fit a multivariate Gaussian N(μ, Σ) on the real spectra and on the
+    synthetic spectra, then return the Fréchet distance:
+
+        FD = ||μ_r - μ_s||² + Tr(Σ_r + Σ_s - 2 * sqrt(Σ_r @ Σ_s))
+
+    A value near 0 means the two distributions overlap in spectrum space.
+    Replacing the discriminative score with this metric avoids training
+    a classifier and gives a differentiable geometry-aware distance.
+
+    Requires scipy.
     """
-    try:
-        from sklearn.neural_network import MLPClassifier
-        from sklearn.model_selection import train_test_split
-        from sklearn.preprocessing import StandardScaler
-    except ImportError:
-        raise ImportError("scikit-learn required for discriminative_score")
+    from scipy.linalg import sqrtm
 
-    # Balance classes by subsampling the larger set
-    n_min = min(len(real), len(synthetic))
-    rng_bal = np.random.default_rng(seed)
-    real_sub = real[rng_bal.choice(len(real), n_min, replace=False)]
-    syn_sub  = synthetic[rng_bal.choice(len(synthetic), n_min, replace=False)]
+    def _spectra(x: np.ndarray) -> np.ndarray:
+        """(N, n_harmonics) magnitude spectra, DC excluded."""
+        mag = np.abs(np.fft.rfft(x, axis=-1))
+        return mag[:, 1 : n_harmonics + 1].astype(np.float64)
 
-    X = np.concatenate([real_sub, syn_sub], axis=0)
-    y = np.array([0] * n_min + [1] * n_min, dtype=int)
+    sr = _spectra(real)       # (N_r, H)
+    ss = _spectra(synthetic)  # (N_s, H)
 
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    mu_r, mu_s = sr.mean(0), ss.mean(0)                       # (H,)
+    cov_r = np.cov(sr.T) + 1e-6 * np.eye(n_harmonics)        # (H, H)
+    cov_s = np.cov(ss.T) + 1e-6 * np.eye(n_harmonics)
 
-    X_tr, X_te, y_tr, y_te = train_test_split(
-        X_scaled, y, test_size=0.3, random_state=seed, stratify=y
-    )
-    clf = MLPClassifier(
-        hidden_layer_sizes=(64, 32),
-        max_iter=n_epochs,
-        random_state=seed,
-        early_stopping=True,
-        n_iter_no_change=5,
-    )
-    clf.fit(X_tr, y_tr)
-    acc = float(clf.score(X_te, y_te))
-    return acc
+    diff   = mu_r - mu_s
+    sq     = sqrtm(cov_r @ cov_s)
+    if np.iscomplexobj(sq):
+        sq = sq.real
+
+    frechet = float(diff @ diff + np.trace(cov_r + cov_s - 2.0 * sq))
+    return max(frechet, 0.0)   # numerical safety: clamp to ≥0
+
+
+def spectral_power_plot(
+    real: np.ndarray,       # (N_real, L)
+    synthetic: np.ndarray,  # (N_syn,  L)
+    ax: Optional[plt.Axes] = None,
+    label: str = "",
+) -> None:
+    """
+    Plot mean FFT magnitude spectrum for real vs. synthetic.
+    Frequency axis in cycles-per-day (for 24h hourly sequences: 0.5, 1, 1.5, …).
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(7, 3))
+
+    L = real.shape[1]
+    freqs = np.fft.rfftfreq(L, d=1.0 / L)   # cycles per day for hourly data
+
+    mean_r = np.abs(np.fft.rfft(real,      axis=-1)).mean(0)  # (L//2+1,)
+    mean_s = np.abs(np.fft.rfft(synthetic, axis=-1)).mean(0)
+
+    ax.plot(freqs, mean_r, color="steelblue", linewidth=2, label="real")
+    ax.plot(freqs, mean_s, color="coral",     linewidth=2, linestyle="--", label="synthetic")
+    ax.set_xlabel("Frequency (cycles / day)")
+    ax.set_ylabel("|FFT| (mean)")
+    ax.set_title(f"Spectral power {label}")
+    ax.legend(fontsize=8)
 
 
 # ---------------------------------------------------------------------------
@@ -418,10 +441,10 @@ def run_all_metrics(
     correlation_heatmap(real, synthetic, axes=ax_corr, label=label)
 
     crps = crps_score(real, synthetic)
-    disc = discriminative_score(real, synthetic)
+    spectral_fd = spectral_frechet_distance(real, synthetic)
 
     fig.suptitle(
-        f"{label}  |  ACF L2={acf_dist:.3f}  |  CRPS={crps:.4f}  |  Disc. acc={disc:.3f}",
+        f"{label}  |  ACF L2={acf_dist:.3f}  |  CRPS={crps:.4f}  |  Spectral FD={spectral_fd:.3f}",
         fontsize=12, fontweight="bold",
     )
     plt.tight_layout()
@@ -431,7 +454,7 @@ def run_all_metrics(
     elif not return_fig:
         plt.close(fig)
 
-    scalars = {"acf_l2": acf_dist, "crps": crps, "discriminative_acc": disc}
+    scalars = {"acf_l2": acf_dist, "crps": crps, "spectral_frechet": spectral_fd}
     return (scalars, fig) if return_fig else scalars
 
 
@@ -480,8 +503,8 @@ def sample_condition_batch(
     (cluster_id, day_type) slice, so evaluation compares like with like.
     """
     rows = np.asarray(condition_rows, dtype=np.int32)
-    if rows.ndim != 2 or rows.shape[1] != 4:
-        raise ValueError(f"Expected conditioning array of shape (N, 4); got {rows.shape}")
+    if rows.ndim != 2 or rows.shape[1] < 2:
+        raise ValueError(f"Expected conditioning array of shape (N, ≥2); got {rows.shape}")
     if len(rows) == 0:
         raise ValueError("Cannot sample from an empty conditioning array")
 
@@ -489,7 +512,7 @@ def sample_condition_batch(
     replace = len(rows) < n_samples
     indices = rng.choice(len(rows), size=n_samples, replace=replace)
     batch = rows[indices].astype(np.int32, copy=False)
-    assert batch.shape == (n_samples, 4)
+    assert batch.shape[0] == n_samples
     return batch
 
 
@@ -500,7 +523,7 @@ def sample_condition_batch(
 def compare_models(
     models_dict: dict,          # {model_name: sample_generator_fn}
     real_data: np.ndarray,      # (N_real, L)  real windows (all conditions pooled or per-condition)
-    conditions: np.ndarray,     # (N_real, 4)  int32 conditioning vectors
+    conditions: np.ndarray,     # (N_real, ≥2) int32 conditioning vectors (first two cols: cluster_id, day_type)
     n_samples: int = 200,
     unique_conditions: Optional[list] = None,
     guidance_scale: float = 1.5,
@@ -508,21 +531,19 @@ def compare_models(
     seed: int = 0,
     show_figs: bool = False,
     verbose: bool = True,
+    c_continuous: Optional[np.ndarray] = None,
 ) -> Tuple["pd.DataFrame", dict]:
     """
     Unified multi-model comparison across all (cluster × day_type) conditions.
-
-    Synthetic batches are drawn using the empirical month/day-of-week mixture
-    observed inside each real condition slice, rather than a single fixed
-    representative calendar token.
 
     Parameters
     ----------
     models_dict : dict mapping model name → callable with signature:
                     generate(c_batch: np.ndarray, key) -> np.ndarray (N, L)
-                  where c_batch is (N, 4) int32 conditioning array.
+                  where c_batch is (N, ≥2) int32 conditioning array.
     real_data   : (N_real, L) array of normalised real windows.
-    conditions  : (N_real, 4) int32 conditioning vectors matching real_data rows.
+    conditions  : (N_real, ≥2) int32 conditioning vectors matching real_data rows.
+                  First column = cluster_id, second = day_type.
     n_samples   : number of synthetic samples to generate per condition per model.
     unique_conditions : list of (cluster_id, day_type) tuples to evaluate.
                         If None, all unique combinations in `conditions` are used.
@@ -535,7 +556,7 @@ def compare_models(
     Returns
     -------
     summary_df : pd.DataFrame  rows = (model, cluster, day_type),
-                                cols = acf_l2, crps, discriminative_acc, wasserstein
+                                cols = acf_l2, crps, spectral_frechet, wasserstein
     figs_dict  : {f"{model}_{condition_label}": matplotlib.Figure}
     """
     try:
@@ -578,33 +599,43 @@ def compare_models(
             )
             key = rng.integers(0, 2**31)
 
-            synth_cond = generate_fn(c_batch, key)          # (n_samples, L)
+            if c_continuous is not None:
+                cc_pool = c_continuous[mask]
+                # Resample c_continuous rows in the same way (independent draw is fine
+                # since the empirical mix is already represented by cond_rows)
+                idx = np.random.default_rng(int(rng.integers(0, 2**31))).choice(
+                    len(cc_pool), size=n_samples, replace=len(cc_pool) < n_samples
+                )
+                cc_batch = np.asarray(cc_pool[idx], dtype=np.float32)
+                synth_cond = generate_fn(c_batch, cc_batch, key)
+            else:
+                synth_cond = generate_fn(c_batch, key)          # (n_samples, L)
             synth_cond = np.array(synth_cond, dtype=np.float32)
 
             # Metrics
-            acf_l2 = acf_compare(real_cond, synth_cond)
-            crps   = crps_score(real_cond, synth_cond)
-            disc   = discriminative_score(real_cond, synth_cond)
-            wass   = marginal_wasserstein(real_cond, synth_cond)
+            acf_l2    = acf_compare(real_cond, synth_cond)
+            crps      = crps_score(real_cond, synth_cond)
+            spectral  = spectral_frechet_distance(real_cond, synth_cond)
+            wass      = marginal_wasserstein(real_cond, synth_cond)
 
             if verbose:
                 print(
-                    f"disc={disc:.3f}  crps={crps:.4f}  "
+                    f"spectral_fd={spectral:.3f}  crps={crps:.4f}  "
                     f"acf_l2={acf_l2:.4f}  wass={wass:.4f}"
                 )
 
             rows.append({
-                "model":              model_name,
-                "cluster":            cid,
-                "day_type":           "weekday" if dt == 0 else "weekend",
-                "condition":          cond_label,
-                "n_real":             len(real_cond),
-                "n_synthetic":        n_samples,
-                "n_empirical_meta":   int(len(np.unique(cond_rows[:, 2:], axis=0))),
-                "acf_l2":             acf_l2,
-                "crps":               crps,
-                "discriminative_acc": disc,
-                "wasserstein":        wass,
+                "model":            model_name,
+                "cluster":          cid,
+                "day_type":         "weekday" if dt == 0 else "weekend",
+                "condition":        cond_label,
+                "n_real":           len(real_cond),
+                "n_synthetic":      n_samples,
+                "n_empirical_meta": int(len(np.unique(cond_rows[:, 2:], axis=0))),
+                "acf_l2":           acf_l2,
+                "crps":             crps,
+                "spectral_frechet": spectral,
+                "wasserstein":      wass,
             })
 
             if show_figs:

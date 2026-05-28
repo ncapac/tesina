@@ -114,9 +114,10 @@ class DiffusionProcess(eqx.Module):
     def p_losses(
         self,
         model: eqx.Module,
-        x0: jax.Array,          # (B, L)
-        c: jax.Array,           # (B, 4) int; may be null [-1,-1,-1,-1] via CFG
-        t: jax.Array,           # (B,)   int diffusion steps
+        x0: jax.Array,                # (B, L)
+        c_discrete: jax.Array,        # (B, 3) int32  [cluster_id, day_type, season]
+        c_continuous: jax.Array,      # (B, n_cont) float32  [daily_mean_temp_normed, …]
+        t: jax.Array,                 # (B,)   int diffusion steps
         key: jax.Array,
     ) -> jax.Array:
         """
@@ -135,7 +136,7 @@ class DiffusionProcess(eqx.Module):
         x_t = self.q_sample(x0, t, noise)
 
         # Predict noise — vmap over batch
-        eps_pred = jax.vmap(model)(x_t, t, c)   # (B, L)
+        eps_pred = jax.vmap(model)(x_t, t, c_discrete, c_continuous)   # (B, L)
 
         # MSE noise loss
         mse = jnp.mean((noise - eps_pred) ** 2)
@@ -157,21 +158,25 @@ class DiffusionProcess(eqx.Module):
     def _predict_eps_cfg(
         self,
         model: eqx.Module,
-        x_t: jax.Array,        # (B, L)
-        c: jax.Array,           # (B, 4) int
-        t: jax.Array,           # (B,)   int
+        x_t: jax.Array,             # (B, L)
+        c_discrete: jax.Array,      # (B, 3) int32
+        c_continuous: jax.Array,    # (B, n_cont) float32
+        t: jax.Array,               # (B,)   int
         guidance_scale: float,
     ) -> jax.Array:
         """
         Classifier-Free Guidance:
           ε_guided = (1+s) · ε_θ(x_t, c, t)  -  s · ε_θ(x_t, ∅, t)
 
-        Null token: jnp.full_like(c, -1) works for any c shape (2 or 4 dims).
+        Null conditioning: c_discrete[0] < 0 triggers zeroing of all embeddings
+        inside the model.  We achieve this by setting the entire c_discrete to
+        full(-1) and c_continuous to zeros.
         """
-        eps_cond   = jax.vmap(model)(x_t, t, c)
+        eps_cond = jax.vmap(model)(x_t, t, c_discrete, c_continuous)
 
-        null_c = jnp.full_like(c, -1)  # null conditioning token
-        eps_uncond = jax.vmap(model)(x_t, t, null_c)
+        null_c_disc = jnp.full_like(c_discrete, -1)
+        null_c_cont = jnp.zeros_like(c_continuous)
+        eps_uncond = jax.vmap(model)(x_t, t, null_c_disc, null_c_cont)
 
         return (1 + guidance_scale) * eps_cond - guidance_scale * eps_uncond
 
@@ -182,7 +187,8 @@ class DiffusionProcess(eqx.Module):
     def ddpm_sample(
         self,
         model: eqx.Module,
-        c: jax.Array,           # (B, 4) int conditioning
+        c_discrete: jax.Array,      # (B, 3) int32
+        c_continuous: jax.Array,    # (B, n_cont) float32
         seq_len: int,
         batch_size: int,
         key: jax.Array,
@@ -199,7 +205,7 @@ class DiffusionProcess(eqx.Module):
             key, subkey = jax.random.split(key)
             t_batch = jnp.full((batch_size,), t_int, dtype=jnp.int32)
 
-            eps = self._predict_eps_cfg(model, x, c, t_batch, guidance_scale)
+            eps = self._predict_eps_cfg(model, x, c_discrete, c_continuous, t_batch, guidance_scale)
 
             # Posterior mean
             sqrt_recip = self.sqrt_recip_acp[t_int]
@@ -230,13 +236,14 @@ class DiffusionProcess(eqx.Module):
     def ddim_sample(
         self,
         model: eqx.Module,
-        c: jax.Array,           # (B, 4) int
+        c_discrete: jax.Array,      # (B, 3) int32
+        c_continuous: jax.Array,    # (B, n_cont) float32
         seq_len: int,
         batch_size: int,
         key: jax.Array,
         n_steps: int = 50,
         guidance_scale: float = 1.5,
-        eta: float = 0.0,       # 0 = deterministic DDIM
+        eta: float = 0.0,           # 0 = deterministic DDIM
     ) -> jax.Array:
         """
         DDIM sampler — fast (n_steps << T) deterministic generation.
@@ -252,7 +259,7 @@ class DiffusionProcess(eqx.Module):
             t_prev = int(step_indices[i + 1]) if i + 1 < len(step_indices) else 0
 
             t_batch = jnp.full((batch_size,), t_int, dtype=jnp.int32)
-            eps = self._predict_eps_cfg(model, x, c, t_batch, guidance_scale)
+            eps = self._predict_eps_cfg(model, x, c_discrete, c_continuous, t_batch, guidance_scale)
 
             acp_t    = self.alphas_cumprod[t_int]
             acp_prev = self.alphas_cumprod[t_prev] if t_prev > 0 else jnp.array(1.0)

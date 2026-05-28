@@ -74,9 +74,10 @@ class RectifiedFlowProcess(eqx.Module):
     def p_losses(
         self,
         model: eqx.Module,
-        x0: jax.Array,     # (B, L)
-        c: jax.Array,      # (B, 4) int32
-        t: jax.Array,      # (B,)   float32 in [0, 1]
+        x0: jax.Array,                # (B, L)
+        c_discrete: jax.Array,        # (B, 3) int32  [cluster_id, day_type, season]
+        c_continuous: jax.Array,      # (B, n_cont) float32
+        t: jax.Array,                 # (B,)   float32 in [0, 1]
         key: jax.Array,
     ) -> jax.Array:
         """
@@ -88,15 +89,10 @@ class RectifiedFlowProcess(eqx.Module):
         noise = jax.random.normal(key, x0.shape)
         x_t   = self.interpolate(x0, noise, t)
 
-        # Convert continuous t → pseudo-integer timestep for the backbone's
-        # sinusoidal embedding (matches DDPM convention: step ∈ [0, T))
         t_int = jnp.round(t * (_T_SCALE - 1)).astype(jnp.int32)  # (B,)
 
-        # Target velocity
-        v_target = noise - x0   # (B, L)
-
-        # Predicted velocity
-        v_pred = jax.vmap(model)(x_t, t_int, c)   # (B, L)
+        v_target = noise - x0
+        v_pred = jax.vmap(model)(x_t, t_int, c_discrete, c_continuous)   # (B, L)
 
         # MSE loss
         mse = jnp.mean((v_target - v_pred) ** 2)
@@ -115,17 +111,19 @@ class RectifiedFlowProcess(eqx.Module):
     def _predict_v_cfg(
         self,
         model: eqx.Module,
-        x_t: jax.Array,        # (B, L)
-        c: jax.Array,           # (B, 4) int
-        t_int: jax.Array,       # (B,)   int32  pseudo-timestep
+        x_t: jax.Array,             # (B, L)
+        c_discrete: jax.Array,      # (B, 3) int32
+        c_continuous: jax.Array,    # (B, n_cont) float32
+        t_int: jax.Array,           # (B,)   int32  pseudo-timestep
         guidance_scale: float,
     ) -> jax.Array:
         """
         CFG:  v_guided = (1+s) · v_cond - s · v_uncond
         """
-        v_cond   = jax.vmap(model)(x_t, t_int, c)
-        null_c   = jnp.full_like(c, -1)
-        v_uncond = jax.vmap(model)(x_t, t_int, null_c)
+        v_cond = jax.vmap(model)(x_t, t_int, c_discrete, c_continuous)
+        null_c_disc = jnp.full_like(c_discrete, -1)
+        null_c_cont = jnp.zeros_like(c_continuous)
+        v_uncond = jax.vmap(model)(x_t, t_int, null_c_disc, null_c_cont)
         return (1 + guidance_scale) * v_cond - guidance_scale * v_uncond
 
     # ------------------------------------------------------------------
@@ -135,7 +133,8 @@ class RectifiedFlowProcess(eqx.Module):
     def sample(
         self,
         model: eqx.Module,
-        c: jax.Array,           # (B, 4) int32 conditioning
+        c_discrete: jax.Array,      # (B, 3) int32
+        c_continuous: jax.Array,    # (B, n_cont) float32
         seq_len: int,
         batch_size: int,
         key: jax.Array,
@@ -150,8 +149,7 @@ class RectifiedFlowProcess(eqx.Module):
         Returns (B, seq_len) samples.
         """
         dt = 1.0 / n_steps
-        # Uniform t grid: start at t=1 (pure noise), end at t=0 (clean data)
-        t_vals = np.linspace(1.0, dt, n_steps)   # n_steps values, [1.0 … dt]
+        t_vals = np.linspace(1.0, dt, n_steps)
 
         key, subkey = jax.random.split(key)
         x = jax.random.normal(subkey, (batch_size, seq_len))
@@ -160,7 +158,7 @@ class RectifiedFlowProcess(eqx.Module):
             t_arr = jnp.full((batch_size,), t_float, dtype=jnp.float32)
             t_int = jnp.round(t_arr * (_T_SCALE - 1)).astype(jnp.int32)
 
-            v = self._predict_v_cfg(model, x, c, t_int, guidance_scale)
+            v = self._predict_v_cfg(model, x, c_discrete, c_continuous, t_int, guidance_scale)
             x = x - dt * v
 
         return x

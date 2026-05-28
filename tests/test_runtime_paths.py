@@ -7,11 +7,12 @@ def test_prepare_artifact_dirs_creates_repo_local_structure(tmp_path):
     repo_root = tmp_path / "tesina"
     (repo_root / "data").mkdir(parents=True)
 
-    paths = prepare_artifact_dirs(repo_root, experiment="diffusion")
+    paths = prepare_artifact_dirs(repo_root, experiment="diffusion", output_subdir="output/03a")
 
     assert paths.repo_root == repo_root.resolve()
     assert paths.data_dir == (repo_root / "data").resolve()
+    assert paths.checkpoints_dir == (repo_root / "output" / "03a" / "checkpoints").resolve()
     assert paths.checkpoints_dir.exists()
     assert paths.results_root.exists()
-    assert paths.run_results_dir == (repo_root / "results" / "diffusion").resolve()
+    assert paths.run_results_dir == (repo_root / "output" / "03a" / "results" / "diffusion").resolve()
     assert paths.run_results_dir.exists()

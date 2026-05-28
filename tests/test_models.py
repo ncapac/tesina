@@ -1,6 +1,10 @@
 """
 tests/test_models.py
 Unit tests for src/models/transformer1d.py and src/models/diffusion.py
+
+Updated for new API:
+  - DiffusionTransformer1D uses c_discrete (3,) + c_continuous (n_cont,)
+  - DiffusionProcess.p_losses / samplers use c_discrete + c_continuous
 """
 import numpy as np
 import pytest
@@ -21,8 +25,8 @@ def _tiny_model(seq_len=24, d_model=32, n_heads=2, n_layers=2, n_clusters=3):
         d_ff=64,
         n_clusters=n_clusters,
         n_day_types=2,
-        n_months=12,
-        n_dow=7,
+        n_seasons=4,
+        n_continuous=1,
         key=jax.random.PRNGKey(0),
     )
 
@@ -32,6 +36,22 @@ def _tiny_diffusion(T=10, data_freq_loss_weight=0.05):
     return DiffusionProcess(T=T, data_freq_loss_weight=data_freq_loss_weight)
 
 
+def _c_discrete(B=None, cid=0, dt=0, season=1):
+    """Helper to build discrete conditioning arrays."""
+    arr = np.array([cid, dt, season], dtype=np.int32)
+    if B is not None:
+        return jnp.tile(arr[None], (B, 1))
+    return jnp.array(arr)
+
+
+def _c_continuous(B=None, temp=0.0):
+    """Helper to build continuous conditioning arrays."""
+    arr = np.array([temp], dtype=np.float32)
+    if B is not None:
+        return jnp.tile(arr[None], (B, 1))
+    return jnp.array(arr)
+
+
 # ─── Transformer ──────────────────────────────────────────────────────────────
 
 class TestDiffusionTransformer1D:
@@ -39,9 +59,8 @@ class TestDiffusionTransformer1D:
         """Unbatched forward pass must produce (seq_len,) output."""
         model = _tiny_model()
         x_t = jax.random.normal(jax.random.PRNGKey(1), (24,))
-        t = jnp.array(5, dtype=jnp.int32)
-        c = jnp.array([0, 0, 0, 0], dtype=jnp.int32)
-        out = model(x_t, t, c)
+        t   = jnp.array(5, dtype=jnp.int32)
+        out = model(x_t, t, _c_discrete(), _c_continuous())
         assert out.shape == (24,)
 
     def test_batched_vmap(self):
@@ -49,20 +68,19 @@ class TestDiffusionTransformer1D:
         model = _tiny_model()
         B = 8
         x_t = jax.random.normal(jax.random.PRNGKey(2), (B, 24))
-        t = jnp.ones(B, dtype=jnp.int32) * 5
-        c = jnp.zeros((B, 4), dtype=jnp.int32)
-        out = jax.vmap(model)(x_t, t, c)
+        t   = jnp.ones(B, dtype=jnp.int32) * 5
+        out = jax.vmap(model)(x_t, t, _c_discrete(B), _c_continuous(B))
         assert out.shape == (B, 24)
 
     def test_null_conditioning(self):
-        """Null conditioning c=[-1,-1,-1,-1] must run without error."""
+        """Null conditioning c_discrete[0] < 0 must run without error."""
         model = _tiny_model()
-        x_t = jax.random.normal(jax.random.PRNGKey(3), (24,))
-        t = jnp.array(0, dtype=jnp.int32)
-        c_null = jnp.array([-1, -1, -1, -1], dtype=jnp.int32)
-        out = model(x_t, t, c_null)
+        x_t   = jax.random.normal(jax.random.PRNGKey(3), (24,))
+        t     = jnp.array(0, dtype=jnp.int32)
+        c_null = jnp.array([-1, -1, -1], dtype=jnp.int32)
+        c_zero = jnp.array([0.0], dtype=jnp.float32)
+        out = model(x_t, t, c_null, c_zero)
         assert out.shape == (24,)
-        # null conditioning must zero out all embeddings → output should be finite
         assert jnp.all(jnp.isfinite(out))
 
     def test_output_finite(self):
@@ -71,11 +89,15 @@ class TestDiffusionTransformer1D:
         x_t = jax.random.normal(jax.random.PRNGKey(4), (24,))
         for cid in range(3):
             for dt in range(2):
-                for mo in [0, 5, 11]:
-                    t = jnp.array(1, dtype=jnp.int32)
-                    c = jnp.array([cid, dt, mo, dt * 5], dtype=jnp.int32)
-                    out = model(x_t, t, c)
-                    assert jnp.all(jnp.isfinite(out)), f"Non-finite output for c=[{cid},{dt},{mo}]"
+                for season in range(4):
+                    t   = jnp.array(1, dtype=jnp.int32)
+                    out = model(
+                        x_t, t,
+                        jnp.array([cid, dt, season], dtype=jnp.int32),
+                        jnp.array([0.5], dtype=jnp.float32),
+                    )
+                    assert jnp.all(jnp.isfinite(out)), \
+                        f"Non-finite output for c=[{cid},{dt},{season}]"
 
     def test_is_equinox_module(self):
         model = _tiny_model()
@@ -101,53 +123,62 @@ class TestDiffusionProcess:
 
     def test_q_sample_shape(self):
         dp = _tiny_diffusion(T=10)
-        model = _tiny_model()
         key = jax.random.PRNGKey(0)
         x0 = jax.random.normal(key, (24,))
-        t = jnp.array(5, dtype=jnp.int32)
+        t  = jnp.array(5, dtype=jnp.int32)
         noise = jax.random.normal(jax.random.PRNGKey(1), (24,))
         x_t = dp.q_sample(x0, t, noise)
         assert x_t.shape == (24,)
 
     def test_p_losses_scalar(self):
         """p_losses must return a scalar loss."""
-        dp = _tiny_diffusion(T=10)
+        dp    = _tiny_diffusion(T=10)
         model = _tiny_model()
-        key = jax.random.PRNGKey(42)
+        key   = jax.random.PRNGKey(42)
         B = 4
         x0 = jax.random.normal(key, (B, 24))
-        c = jnp.zeros((B, 4), dtype=jnp.int32)
-        t = jax.random.randint(key, (B,), 0, 10, dtype=jnp.int32)
-        loss = dp.p_losses(model, x0, c, t, key)
+        t  = jax.random.randint(key, (B,), 0, 10, dtype=jnp.int32)
+        loss = dp.p_losses(model, x0, _c_discrete(B), _c_continuous(B), t, key)
         assert loss.shape == ()
         assert float(loss) >= 0
 
     def test_ddpm_sample_shape(self):
-        dp = _tiny_diffusion(T=10)
+        dp    = _tiny_diffusion(T=10)
         model = _tiny_model()
-        key = jax.random.PRNGKey(5)
+        key   = jax.random.PRNGKey(5)
         B = 3
-        c = jnp.zeros((B, 4), dtype=jnp.int32)
-        samples = dp.ddpm_sample(model, c, seq_len=24, batch_size=B, key=key, guidance_scale=1.0)
+        samples = dp.ddpm_sample(
+            model, _c_discrete(B), _c_continuous(B),
+            seq_len=24, batch_size=B, key=key, guidance_scale=1.0,
+        )
         assert samples.shape == (B, 24)
         assert jnp.all(jnp.isfinite(samples))
 
     def test_ddim_sample_shape(self):
-        dp = _tiny_diffusion(T=10)
+        dp    = _tiny_diffusion(T=10)
         model = _tiny_model()
-        key = jax.random.PRNGKey(6)
+        key   = jax.random.PRNGKey(6)
         B = 3
-        c = jnp.zeros((B, 4), dtype=jnp.int32)
-        samples = dp.ddim_sample(model, c, seq_len=24, batch_size=B, key=key, n_steps=5, guidance_scale=1.0)
+        samples = dp.ddim_sample(
+            model, _c_discrete(B), _c_continuous(B),
+            seq_len=24, batch_size=B, key=key, n_steps=5, guidance_scale=1.0,
+        )
         assert samples.shape == (B, 24)
         assert jnp.all(jnp.isfinite(samples))
 
     def test_ddim_deterministic(self):
         """Same key + eta=0 must give identical samples."""
-        dp = _tiny_diffusion(T=10)
+        dp    = _tiny_diffusion(T=10)
         model = _tiny_model()
-        c = jnp.zeros((2, 4), dtype=jnp.int32)
-        key = jax.random.PRNGKey(7)
-        s1 = dp.ddim_sample(model, c, seq_len=24, batch_size=2, key=key, n_steps=5, eta=0.0)
-        s2 = dp.ddim_sample(model, c, seq_len=24, batch_size=2, key=key, n_steps=5, eta=0.0)
+        B     = 2
+        key   = jax.random.PRNGKey(7)
+        s1 = dp.ddim_sample(
+            model, _c_discrete(B), _c_continuous(B),
+            seq_len=24, batch_size=B, key=key, n_steps=5, eta=0.0,
+        )
+        s2 = dp.ddim_sample(
+            model, _c_discrete(B), _c_continuous(B),
+            seq_len=24, batch_size=B, key=key, n_steps=5, eta=0.0,
+        )
         np.testing.assert_array_equal(np.array(s1), np.array(s2))
+

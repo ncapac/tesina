@@ -40,7 +40,10 @@ import pickle
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
+
+# Columns in power_data['P_mean'] that are hierarchical aggregations, not real meters.
+_AGG_COLS: frozenset[str] = frozenset({"S1", "S2", "S11", "S12", "S21", "S22", "all"})
 
 
 def load_raw(path: str | Path = "data/power.pk") -> pd.DataFrame:
@@ -321,3 +324,148 @@ def denormalize_by_meter(
     mean = stats["mean"][meter_indices][:, None]
     std = stats["std"][meter_indices][:, None]
     return values * std + mean
+
+
+# ---------------------------------------------------------------------------
+# Rolle (Switzerland) dataset — new primary data source
+# ---------------------------------------------------------------------------
+
+def load_rolle_data(
+    data_dir: str | Path,
+) -> Tuple[pd.DataFrame, pd.Series]:
+    """
+    Load the Rolle (Switzerland) power + NWP dataset.
+
+    Dataset
+    -------
+    Source  : Zenodo 10.5281/zenodo.3463136
+    Meters  : 62 IEC 61000-4-30 Class A power-quality meters, 24 real
+              substations/LV cabinets in Rolle (CH).  The ``P_mean``
+              DataFrame additionally contains 7 fictitious hierarchical
+              aggregation columns (``S1``, ``S2``, ``S11``, ``S12``,
+              ``S21``, ``S22``, ``all``) that are dropped here.
+    Period  : 2018-01-13 – 2019-01-19 (~1 year)
+    Native  : 10-minute resolution → resampled to 1-hour.
+    NWP     : Meteoblue forecasts (temperature, GHI, GNI, RH, wind speed /
+              direction) stored as 24-element arrays (24h ahead) at every
+              10-minute timestamp.
+
+    Parameters
+    ----------
+    data_dir : path to the directory containing ``power_data.p`` and
+               ``nwp_data.h5``.
+
+    Returns
+    -------
+    power_hourly : pd.DataFrame, shape (T_hourly, 24), float32
+        Mean active power [W] per real meter, hourly resolution.
+        Columns are meter SHA-hash identifiers.  Index is tz-aware UTC.
+    temp_daily : pd.Series, shape (N_days,), float64
+        Daily mean temperature [°C] for Rolle, indexed by calendar day
+        (tz-aware UTC midnight).  Computed as the mean of all 10-minute
+        NWP temperature forecast arrays within each calendar day.
+    """
+    data_dir = Path(data_dir)
+
+    # --- Power data ----------------------------------------------------------
+    with open(data_dir / "power_data.p", "rb") as f:
+        power_dict = pickle.load(f)
+
+    pm: pd.DataFrame = power_dict["P_mean"]
+    # Drop hierarchical aggregation columns; keep only real meter columns.
+    agg_cols = [c for c in pm.columns if str(c) in _AGG_COLS]
+    pm = pm.drop(columns=agg_cols)
+
+    # Resample 10-min → hourly (mean).
+    pm = pm.resample("1h").mean()
+    pm = pm.astype(np.float32)
+
+    # --- NWP data ------------------------------------------------------------
+    try:
+        nwp: pd.DataFrame = pd.read_hdf(data_dir / "nwp_data.h5", "df")
+    except ImportError as exc:
+        raise ImportError(
+            "PyTables is required to read HDF5 files: pip install tables"
+        ) from exc
+
+    # Each cell in the 'temperature' column is a 24-element numpy array
+    # representing a 24-hour ahead temperature forecast [°C].
+    # Compute the mean of each forecast to get a scalar "expected daily mean
+    # temperature" for the 24h window starting at that timestamp.
+    scalar_temp: pd.Series = nwp["temperature"].apply(
+        lambda arr: float(np.asarray(arr).mean())
+    )
+
+    # Resample to calendar days (mean of all 10-min estimates in the day).
+    temp_daily: pd.Series = scalar_temp.resample("1D").mean()
+    # Normalise the index to midnight UTC so it aligns with power_hourly dates.
+    temp_daily.index = temp_daily.index.normalize()
+
+    return pm, temp_daily
+
+
+def compute_temp_stats(temp_daily: pd.Series) -> dict:
+    """
+    Compute global mean and std for daily mean temperature normalisation.
+
+    Returns
+    -------
+    dict with keys ``mean`` (float) and ``std`` (float, floored at 1e-8).
+    """
+    return {
+        "mean": float(temp_daily.mean()),
+        "std": float(max(temp_daily.std(), 1e-8)),
+    }
+
+
+def normalize_temp(temp_daily: pd.Series, temp_stats: dict) -> pd.Series:
+    """Z-score normalise a daily mean temperature Series."""
+    return (temp_daily - temp_stats["mean"]) / temp_stats["std"]
+
+
+# ---------------------------------------------------------------------------
+# Per-instance scale stats (for shape normalisation, see dataset.shape_normalize)
+# ---------------------------------------------------------------------------
+
+def compute_scale_stats(log_mean: np.ndarray, log_std: np.ndarray) -> dict:
+    """
+    Compute the global mean/std used to z-score per-instance ``log_mean`` and
+    ``log_std`` channels in ``c_continuous``.
+
+    These four scalars are exactly what notebook 02 §1b applies to build
+    ``log_mean_z`` and ``log_std_z`` from the raw per-instance log-scales
+    produced by :func:`src.data.dataset.shape_normalize`. Persisting them
+    (e.g. to ``data/scale_stats.json``) lets evaluation notebooks invert the
+    z-score and recover per-query ``log_mean`` / ``log_std`` from
+    ``c_continuous[:, 1:3]`` — which in turn enables
+    :func:`src.data.dataset.shape_denormalize` to map generated normalised
+    profiles back to raw-unit Watts.
+    """
+    return {
+        "log_mean_mean": float(np.mean(log_mean)),
+        "log_mean_std": float(max(np.std(log_mean), 1e-8)),
+        "log_std_mean": float(np.mean(log_std)),
+        "log_std_std": float(max(np.std(log_std), 1e-8)),
+    }
+
+
+def invert_scale_z(
+    log_mean_z: np.ndarray,
+    log_std_z: np.ndarray,
+    scale_stats: dict,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Inverse of the global z-score applied to per-instance log scales.
+
+    Given the (z-scored) channels carried in ``c_continuous`` and the stats
+    saved by :func:`compute_scale_stats`, recover the raw per-instance
+    ``log_mean`` / ``log_std`` arrays needed by
+    :func:`src.data.dataset.shape_denormalize`.
+    """
+    log_mean = np.asarray(log_mean_z, dtype=np.float32) * np.float32(
+        scale_stats["log_mean_std"]
+    ) + np.float32(scale_stats["log_mean_mean"])
+    log_std = np.asarray(log_std_z, dtype=np.float32) * np.float32(
+        scale_stats["log_std_std"]
+    ) + np.float32(scale_stats["log_std_mean"])
+    return log_mean, log_std

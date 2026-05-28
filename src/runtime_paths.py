@@ -16,6 +16,20 @@ import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 
+# ---------------------------------------------------------------------------
+# Convenience module-level constants for notebooks.
+# Resolved once at import time; can be overridden via env vars.
+# ---------------------------------------------------------------------------
+_REPO_ROOT = Path(
+    os.environ.get("TESINA_REPO_ROOT", Path(__file__).resolve().parent.parent)
+).expanduser().resolve()
+DATA_DIR: Path = Path(
+    os.environ.get("TESINA_DATA_DIR", _REPO_ROOT / "data")
+).expanduser().resolve()
+OUTPUT_DIR: Path = Path(
+    os.environ.get("TESINA_OUTPUT_DIR", _REPO_ROOT / "output")
+).expanduser().resolve()
+
 
 @dataclass(frozen=True)
 class ArtifactPaths:
@@ -49,7 +63,7 @@ def prepare_artifact_dirs(
     repo_root: str | Path,
     experiment: str | None = None,
     *,
-    output_subdir: str | None = None,
+    output_subdir: str,
 ) -> ArtifactPaths:
     """
     Resolve and create repo-local artifact directories.
@@ -57,10 +71,8 @@ def prepare_artifact_dirs(
     Parameters
     ----------
     output_subdir:
-        Optional sub-path relative to *repo_root* that acts as the base for
+        Sub-path relative to *repo_root* that acts as the base for
         checkpoints and results (e.g. ``'output/03'`` or ``'output/03b'``).
-        When *None* the legacy layout (``repo_root/checkpoints/`` and
-        ``repo_root/results/``) is used.
 
     Environment overrides are optional:
       - TESINA_CHECKPOINT_DIR
@@ -73,7 +85,7 @@ def prepare_artifact_dirs(
     if not data_dir.exists():
         raise FileNotFoundError(f"Expected data directory under {root}")
 
-    base = root / output_subdir if output_subdir else root
+    base = root / output_subdir
     checkpoints_dir = _resolve_dir(root, "TESINA_CHECKPOINT_DIR", base / "checkpoints")
     results_root = _resolve_dir(root, "TESINA_RESULTS_DIR", base / "results")
     run_results_dir = results_root if not experiment else results_root / experiment
@@ -143,7 +155,6 @@ def restore_export_bundle(
     if not archive.exists():
         raise FileNotFoundError(f"Artifact bundle not found: {archive}")
 
-    prepare_artifact_dirs(root)
     restored_paths: list[Path] = []
 
     with tarfile.open(archive, "r:gz") as tar:

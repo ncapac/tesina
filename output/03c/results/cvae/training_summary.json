@@ -1,5 +1,5 @@
 {
-  "model": "RectifiedFlow + DiffusionTransformer1D",
+  "model": "CVAETransformer1D",
   "parametric": true,
   "train_instances": 823,
   "val_instances": 177,
@@ -17,9 +17,9 @@
     "log_mean_z",
     "log_std_z"
   ],
-  "n_parameters": 1106274,
+  "n_parameters": 286296,
   "batch_size": 64,
-  "final_train_loss": 126.84440803527832,
+  "final_train_loss": 461.28254954020184,
   "final_val_loss": null,
   "random_seed": 42,
   "val_fraction": 0.15

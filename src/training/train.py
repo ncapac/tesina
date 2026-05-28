@@ -19,7 +19,7 @@ Usage
     model = DiffusionTransformer1D(...)
     diffusion = DiffusionProcess(T=1000)
     trainer = Trainer(model, diffusion, lr=1e-3, warmup_steps=500,
-                      total_steps=50_000, checkpoint_dir='checkpoints/')
+                      total_steps=50_000, checkpoint_dir='output/03a/checkpoints')
     trainer.fit(train_loader, val_loader, n_epochs=100)
 """
 
@@ -49,7 +49,8 @@ def train_step(
     opt_state: optax.OptState,
     optimizer: optax.GradientTransformation,
     x0: jax.Array,               # (B, L) float32
-    c: jax.Array,                # (B, 4) int32
+    c_discrete: jax.Array,       # (B, 3) int32  [cluster_id, day_type, season]
+    c_continuous: jax.Array,     # (B, n_cont) float32  [daily_mean_temp_normed, …]
     key: jax.Array,
     p_uncond: float = 0.15,
 ) -> Tuple[eqx.Module, optax.OptState, jax.Array]:
@@ -64,13 +65,14 @@ def train_step(
 
     # CFG: randomly null out conditioning
     null_mask = jax.random.bernoulli(key_cfg, p=p_uncond, shape=(B,))   # (B,)
-    c_train = jnp.where(null_mask[:, None], jnp.full_like(c, -1), c)
+    c_disc_train = jnp.where(null_mask[:, None], jnp.full_like(c_discrete, -1), c_discrete)
+    c_cont_train = jnp.where(null_mask[:, None], jnp.zeros_like(c_continuous), c_continuous)
 
     # Sample random diffusion timesteps
     t = jax.random.randint(key_t, shape=(B,), minval=0, maxval=diffusion.T)
 
     def loss_fn(m):
-        return diffusion.p_losses(m, x0, c_train, t, key_noise)
+        return diffusion.p_losses(m, x0, c_disc_train, c_cont_train, t, key_noise)
 
     loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
     updates, new_opt_state = optimizer.update(grads, opt_state, eqx.filter(model, eqx.is_array))
@@ -83,13 +85,14 @@ def eval_step(
     model: eqx.Module,
     diffusion,
     x0: jax.Array,
-    c: jax.Array,
+    c_discrete: jax.Array,
+    c_continuous: jax.Array,
     key: jax.Array,
 ) -> jax.Array:
     """Validation loss (no gradient)."""
     B = x0.shape[0]
     t = jax.random.randint(key, shape=(B,), minval=0, maxval=diffusion.T)
-    return diffusion.p_losses(model, x0, c, t, key)
+    return diffusion.p_losses(model, x0, c_discrete, c_continuous, t, key)
 
 
 # ---------------------------------------------------------------------------
@@ -157,29 +160,31 @@ class Trainer:
             # per-cluster loss accumulation: {cluster_id: [losses]}
             cluster_loss_accum: dict[int, list[float]] = {}
 
-            for x0_np, c_np in train_loader:
+            for x0_np, c_disc_np, c_cont_np in train_loader:
                 self.key, subkey = jax.random.split(self.key)
-                x0 = jnp.array(x0_np)
-                c  = jnp.array(c_np)
+                x0         = jnp.array(x0_np)
+                c_discrete = jnp.array(c_disc_np)
+                c_continuous = jnp.array(c_cont_np)
 
                 self.model, self.opt_state, loss = train_step(
                     self.model, self.diffusion,
                     self.opt_state, self.optimizer,
-                    x0, c, subkey, self.p_uncond,
+                    x0, c_discrete, c_continuous, subkey, self.p_uncond,
                 )
                 self.step += 1
                 loss_val = float(loss)
                 epoch_losses.append(loss_val)
 
-                # Accumulate per-cluster loss (best-effort: compute per cluster subset)
+                # Accumulate per-cluster loss
                 if log_cluster_losses:
-                    cluster_ids = np.array(c_np[:, 0])
+                    cluster_ids = np.array(c_disc_np[:, 0])
                     for cid in np.unique(cluster_ids):
                         mask = cluster_ids == cid
-                        x0_c = jnp.array(x0_np[mask])
-                        c_c  = jnp.array(c_np[mask])
+                        x0_c  = jnp.array(x0_np[mask])
+                        cd_c  = jnp.array(c_disc_np[mask])
+                        cc_c  = jnp.array(c_cont_np[mask])
                         self.key, sk2 = jax.random.split(self.key)
-                        cl_loss = eval_step(self.model, self.diffusion, x0_c, c_c, sk2)
+                        cl_loss = eval_step(self.model, self.diffusion, x0_c, cd_c, cc_c, sk2)
                         cluster_loss_accum.setdefault(int(cid), []).append(float(cl_loss))
 
                 if self.step % log_every_steps == 0:
@@ -196,13 +201,14 @@ class Trainer:
             val_str = ""
             if val_loader is not None and epoch % val_every == 0:
                 val_loss_vals = []
-                for i, (xv_np, cv_np) in enumerate(val_loader):
+                for i, (xv_np, cdv_np, ccv_np) in enumerate(val_loader):
                     if i >= val_batches:
                         break
                     self.key, subkey = jax.random.split(self.key)
-                    xv = jnp.array(xv_np)
-                    cv = jnp.array(cv_np)
-                    vl = eval_step(self.model, self.diffusion, xv, cv, subkey)
+                    xv  = jnp.array(xv_np)
+                    cdv = jnp.array(cdv_np)
+                    ccv = jnp.array(ccv_np)
+                    vl = eval_step(self.model, self.diffusion, xv, cdv, ccv, subkey)
                     val_loss_vals.append(float(vl))
                 mean_val = float(np.mean(val_loss_vals))
                 self.val_losses.append(mean_val)
