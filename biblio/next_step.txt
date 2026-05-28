@@ -1,0 +1,6 @@
+
+Direzione: potremmo fare un confronto con degli altri metodi come conditional variational auto encoder.  
+a) Condizioniamo con le stesse variabili 
+b) generiamo un anno di dati 
+c) confrontiamo i profili in termini di statistiche (consumo annuo, contenuto in frequenza, distanza dal giorno reale piu’ simile). 
+Non so se avevi intenzione di esplorare la cosa da un lato piu’ teorico.
