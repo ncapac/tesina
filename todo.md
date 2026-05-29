@@ -1,6 +1,28 @@
 # Project notes & open TODOs
 
-Last updated: 2026-05-28
+Last updated: 2026-05-29
+
+---
+
+## Pipeline fixes shipped 2026-05-29 (pre-GPU review pass)
+
+1. **Colab bootstrap cell** added at the top of 03a / 03b / 03c. Clones
+   `ncapac/tesina`, pip-installs `requirements.txt`, `cd`s into
+   `notebooks/`, and warns about missing raw-data files. No-op locally.
+   (Previously cell 1 on Colab failed with `ModuleNotFoundError: equinox`.)
+2. **LR-schedule budget alignment.** The 03a/b/c train cells now derive
+   `TOTAL_STEPS = N_EPOCHS × train_loader.epoch_len` instead of passing
+   100 000 / 50 000. Previously the optax cosine schedule decayed over a
+   100 k budget while training stopped at ~5.8 k steps (GPU) / ~36 steps
+   (smoke), so the LR never left the warmup-end plateau. Warmup now scales
+   as 5 % of `TOTAL_STEPS` (min 20). README §6 table updated to match.
+3. **`val_every=5` → `val_every=1`** in 03a/b/c so validation, early
+   stopping, and `best_model.pkl` (saved by the early-stop branch) all
+   actually run — previously the smoke profile (`n_epochs=3`) never
+   triggered a single val pass, leaving `final_val_loss=null` and the
+   `checkpoints/` folder empty.
+4. **README param count** corrected from `~845 k` to `~1.11 M` to match
+   the locked `n_continuous=3` conditioning surface.
 
 ---
 
@@ -22,8 +44,33 @@ Last updated: 2026-05-28
 
 ## Open TODOs
 
-### Normalisation fix (2026-05-28) — verification
-- [ ] Run notebooks 01 → 05 end-to-end (CPU smoke profile) to confirm the per-instance shape-normalisation refactor executes cleanly and metrics now report in Watts
+### Verification of the 2026-05-29 fixes
+- [x] CPU smoke of 03a end-to-end with the patched train cell —
+      confirm `best_model.pkl` is written and `final_val_loss` is non-null
+- [ ] Same CPU smoke of 03b and 03c
+- [ ] Re-run 04 + 05 on the smoke checkpoints to confirm the load path
+      still works
+
+### Residual ML pitfalls worth a second pass (not blocking)
+- [ ] **Per-cluster training-loss diagnostic is in the inner loop.**
+      `train.py` / `train_rf.py` call an extra `eval_step` *per cluster
+      slice in every batch*. On a 5-cluster dataset this is ~5× the
+      forward-pass cost of the actual training step. Either gate behind
+      `log_cluster_losses=False` for GPU runs, or move it to a once-per-
+      epoch sweep over a held-out batch.
+- [ ] **`_epoch_len` fallback (`200` / `10_000`) is silent.** If the
+      loader ever loses its `epoch_len` attribute (e.g. a wrapped
+      iterator) the trainer will run a wildly wrong number of steps
+      with no warning. Make it an assertion or surface a printed
+      warning.
+- [ ] **24 meters, 15 % val → ≈4 val meters.** Per-cluster val pools
+      can be empty for some `(cluster, day_type, season)` cells. Flag
+      `n_real` next to every reported metric in 04/05 and consider a
+      bootstrap-CI or meter-shuffle robustness check before publishing
+      a ranking.
+- [ ] Confirm DDIM sampler null token (`[-1,-1,-1]`, zeros) is byte-for-
+      byte the same as the CFG-dropout null used in `train_step`. (Spot
+      check; looks consistent but worth a unit test.)
 
 ### GPU training (blocker for everything below)
 - [ ] Run 03a (diffusion) on GPU — `TESINA_GPU=1`, ~100k steps

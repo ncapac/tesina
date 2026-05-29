@@ -5,7 +5,7 @@
   "val_instances": 177,
   "n_clusters": 5,
   "gpu_profile": false,
-  "total_steps": 2000,
+  "total_steps": 36,
   "n_epochs_cap": 3,
   "c_discrete": [
     "cluster_id",
@@ -19,8 +19,8 @@
   ],
   "n_parameters": 1106274,
   "batch_size": 64,
-  "final_train_loss": 126.84440803527832,
-  "final_val_loss": null,
+  "final_train_loss": 1.3503787914911907,
+  "final_val_loss": 1.4356819987297058,
   "random_seed": 42,
   "val_fraction": 0.15
 }

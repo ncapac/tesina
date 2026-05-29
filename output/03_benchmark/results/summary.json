@@ -16,10 +16,14 @@
   ],
   "temp_tol": 0.5,
   "min_pool": 5,
+  "normalisation": "per-instance shape z-score (xs trained on xs_norm)",
+  "metrics_units": "Watts",
   "metrics": {
-    "mae_kw": 15.429500579833984,
-    "rmse_kw": 19.816059112548828,
-    "daily_energy_mape": 0.4431801438331604
+    "mae_W": 3.787580966949463,
+    "rmse_W": 5.066189765930176,
+    "daily_energy_mape": 6.259760709781403e-08,
+    "mae_norm": 0.5706555843353271,
+    "rmse_norm": 0.7483280897140503
   },
   "random_seed": 42,
   "val_fraction": 0.15

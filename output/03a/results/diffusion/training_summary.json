@@ -1,26 +1,18 @@
 {
   "model": "DiffusionTransformer1D",
   "parametric": true,
-  "train_instances": 823,
-  "val_instances": 177,
+  "train_instances": 7440,
+  "val_instances": 1488,
   "n_clusters": 5,
-  "gpu_profile": false,
-  "total_steps": 2000,
-  "n_epochs_cap": 3,
-  "c_discrete": [
-    "cluster_id",
-    "day_type",
-    "season"
-  ],
-  "c_continuous": [
-    "temp_normed",
-    "log_mean_z",
-    "log_std_z"
-  ],
+  "gpu_profile": true,
+  "total_steps": 5800,
+  "n_epochs_cap": 100,
+  "c_discrete": ["cluster_id", "day_type", "season"],
+  "c_continuous": ["temp_normed", "log_mean_z", "log_std_z"],
   "n_parameters": 1106274,
-  "batch_size": 64,
-  "final_train_loss": 7.265836536884308,
-  "final_val_loss": null,
+  "batch_size": 128,
+  "final_train_loss": 0.2503624861610347,
+  "final_val_loss": 0.278644584864378,
   "random_seed": 42,
   "val_fraction": 0.15
 }

@@ -122,7 +122,7 @@ All training notebooks share an identical structure (§1 data → §2 split →
 ### 4.1 Diffusion (DDPM + DDIM, CFG)
 
 - File: [src/models/diffusion.py](src/models/diffusion.py), [src/models/transformer1d.py](src/models/transformer1d.py)
-- Architecture: `DiffusionTransformer1D` — `seq_len=24, d_model=128, n_heads=4, n_layers=4, d_ff=256` → ~845 k parameters
+- Architecture: `DiffusionTransformer1D` — `seq_len=24, d_model=128, n_heads=4, n_layers=4, d_ff=256` → **~1.11 M parameters** with the locked `n_continuous=3` conditioning (the earlier ~845 k figure was for the single-continuous-channel prototype)
 - Conditioning: AdaLN on the 3 discrete channels; cross-attention on the 3 continuous channels
 - Schedule: cosine, T=1000
 - Classifier-free guidance: discrete null `[-1,-1,-1]`, continuous null zeros, dropout `p_uncond=0.15`
@@ -189,10 +189,11 @@ The variable controls a coarse hyperparameter switch:
 
 | Setting | CPU smoke (`TESINA_GPU=0`) | GPU run (`TESINA_GPU=1`) |
 |---------|---------------------------|--------------------------|
-| Total training steps | 2 000 (50 000 for CVAE) | 100 000 (50 000 CVAE) |
 | Epoch cap | 3 | 100 |
-| LR warmup | 50 | 500 (300 CVAE) |
+| LR warmup | 5 % of derived `total_steps` (min 20) | same |
+| `total_steps` (LR-schedule budget) | derived as `n_epochs × train_loader.epoch_len` so the cosine LR matches actual training duration | same |
 | Early-stop patience | 3 | 20 |
+| Validation cadence | every epoch | every epoch |
 | Batch size | 64 | 128 |
 | Training subsample | 1 000 instances | Full dataset |
 
