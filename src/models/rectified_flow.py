@@ -37,6 +37,8 @@ import jax
 import jax.numpy as jnp
 import equinox as eqx
 
+from src.models.transformer1d import make_cfg_null_conditioning
+
 # Scale factor: continuous t ∈ [0,1] → pseudo-timestep for sinusoidal embedding
 # Must be consistent between training and sampling.
 _T_SCALE: int = 1000
@@ -121,8 +123,7 @@ class RectifiedFlowProcess(eqx.Module):
         CFG:  v_guided = (1+s) · v_cond - s · v_uncond
         """
         v_cond = jax.vmap(model)(x_t, t_int, c_discrete, c_continuous)
-        null_c_disc = jnp.full_like(c_discrete, -1)
-        null_c_cont = jnp.zeros_like(c_continuous)
+        null_c_disc, null_c_cont = make_cfg_null_conditioning(c_discrete, c_continuous)
         v_uncond = jax.vmap(model)(x_t, t_int, null_c_disc, null_c_cont)
         return (1 + guidance_scale) * v_cond - guidance_scale * v_uncond
 

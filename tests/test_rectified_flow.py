@@ -15,7 +15,7 @@ def _tiny_model(seq_len=24):
     from src.models.transformer1d import DiffusionTransformer1D
     return DiffusionTransformer1D(
         seq_len=seq_len, d_model=32, n_heads=2, n_layers=2, d_ff=64,
-        n_clusters=3, n_day_types=2, n_months=12, n_dow=7,
+        n_clusters=3, n_day_types=2, n_seasons=4, n_continuous=1,
         key=jax.random.PRNGKey(0),
     )
 
@@ -23,6 +23,16 @@ def _tiny_model(seq_len=24):
 def _tiny_rf():
     from src.models.rectified_flow import RectifiedFlowProcess
     return RectifiedFlowProcess(freq_loss_weight=0.05)
+
+
+def _c_discrete(batch_size, cid=0, dt=0, season=1):
+    row = jnp.array([cid, dt, season], dtype=jnp.int32)
+    return jnp.tile(row[None], (batch_size, 1))
+
+
+def _c_continuous(batch_size, temp=0.0):
+    row = jnp.array([temp], dtype=jnp.float32)
+    return jnp.tile(row[None], (batch_size, 1))
 
 
 # ─── RectifiedFlowProcess ─────────────────────────────────────────────────────
@@ -61,9 +71,10 @@ class TestRectifiedFlowProcess:
         model = _tiny_model()
         B = 4
         x0 = jax.random.normal(jax.random.PRNGKey(1), (B, 24))
-        c  = jnp.zeros((B, 4), dtype=jnp.int32)
+        c_discrete = _c_discrete(B)
+        c_continuous = _c_continuous(B)
         t  = jax.random.uniform(jax.random.PRNGKey(2), (B,))
-        loss = rf.p_losses(model, x0, c, t, jax.random.PRNGKey(3))
+        loss = rf.p_losses(model, x0, c_discrete, c_continuous, t, jax.random.PRNGKey(3))
         assert loss.shape == ()
         assert float(loss) >= 0
         assert jnp.isfinite(loss)
@@ -74,9 +85,10 @@ class TestRectifiedFlowProcess:
         model = _tiny_model()
         B = 4
         x0 = jax.random.normal(jax.random.PRNGKey(4), (B, 24))
-        c  = jnp.full((B, 4), -1, dtype=jnp.int32)
+        c_discrete = jnp.full((B, 3), -1, dtype=jnp.int32)
+        c_continuous = _c_continuous(B)
         t  = jax.random.uniform(jax.random.PRNGKey(5), (B,))
-        loss = rf.p_losses(model, x0, c, t, jax.random.PRNGKey(6))
+        loss = rf.p_losses(model, x0, c_discrete, c_continuous, t, jax.random.PRNGKey(6))
         assert jnp.isfinite(loss)
 
     def test_sample_shape(self):
@@ -84,8 +96,7 @@ class TestRectifiedFlowProcess:
         rf    = _tiny_rf()
         model = _tiny_model()
         B = 3
-        c = jnp.zeros((B, 4), dtype=jnp.int32)
-        out = rf.sample(model, c, seq_len=24, batch_size=B,
+        out = rf.sample(model, _c_discrete(B), _c_continuous(B), seq_len=24, batch_size=B,
                         key=jax.random.PRNGKey(7), n_steps=5)
         assert out.shape == (B, 24)
 
@@ -93,8 +104,8 @@ class TestRectifiedFlowProcess:
         """Sampled values must be finite."""
         rf    = _tiny_rf()
         model = _tiny_model()
-        c = jnp.array([[0, 0, 5, 1], [1, 1, 0, 6]], dtype=jnp.int32)
-        out = rf.sample(model, c, seq_len=24, batch_size=2,
+        c_discrete = jnp.array([[0, 0, 1], [1, 1, 2]], dtype=jnp.int32)
+        out = rf.sample(model, c_discrete, _c_continuous(2), seq_len=24, batch_size=2,
                         key=jax.random.PRNGKey(8), n_steps=5)
         assert jnp.all(jnp.isfinite(out))
 
@@ -102,10 +113,11 @@ class TestRectifiedFlowProcess:
         """CFG (guidance_scale > 0) must produce different output than scale=0."""
         rf    = _tiny_rf()
         model = _tiny_model()
-        c = jnp.array([[0, 0, 5, 1]] * 4, dtype=jnp.int32)
-        out_uncond = rf.sample(model, c, seq_len=24, batch_size=4,
+        c_discrete = _c_discrete(4, cid=0, dt=0, season=1)
+        c_continuous = _c_continuous(4)
+        out_uncond = rf.sample(model, c_discrete, c_continuous, seq_len=24, batch_size=4,
                                key=jax.random.PRNGKey(9), n_steps=5, guidance_scale=0.0)
-        out_guided = rf.sample(model, c, seq_len=24, batch_size=4,
+        out_guided = rf.sample(model, c_discrete, c_continuous, seq_len=24, batch_size=4,
                                key=jax.random.PRNGKey(9), n_steps=5, guidance_scale=1.5)
         # With different guidance the outputs differ (not all-equal)
         assert not jnp.allclose(out_uncond, out_guided)
@@ -125,9 +137,10 @@ class TestRFTrainStep:
 
         B = 4
         x0 = jax.random.normal(jax.random.PRNGKey(10), (B, 24))
-        c  = jnp.zeros((B, 4), dtype=jnp.int32)
+        c_discrete = _c_discrete(B)
+        c_continuous = _c_continuous(B)
 
-        _, _, loss = train_step_rf(model, rf, opt_state, optimizer, x0, c,
+        _, _, loss = train_step_rf(model, rf, opt_state, optimizer, x0, c_discrete, c_continuous,
                                    jax.random.PRNGKey(11))
         assert loss.shape == ()
         assert float(loss) >= 0.0
@@ -143,10 +156,11 @@ class TestRFTrainStep:
         opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
 
         x0 = jax.random.normal(jax.random.PRNGKey(12), (4, 24))
-        c  = jnp.zeros((4, 4), dtype=jnp.int32)
+        c_discrete = _c_discrete(4)
+        c_continuous = _c_continuous(4)
 
         leaves_before = jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_array))
-        model2, _, _ = train_step_rf(model, rf, opt_state, optimizer, x0, c,
+        model2, _, _ = train_step_rf(model, rf, opt_state, optimizer, x0, c_discrete, c_continuous,
                                      jax.random.PRNGKey(13))
         leaves_after = jax.tree_util.tree_leaves(eqx.filter(model2, eqx.is_array))
 
@@ -162,8 +176,7 @@ class TestRFTrainStep:
         model = _tiny_model()
         rf    = _tiny_rf()
         x0 = jax.random.normal(jax.random.PRNGKey(14), (4, 24))
-        c  = jnp.zeros((4, 4), dtype=jnp.int32)
-        loss = eval_step_rf(model, rf, x0, c, jax.random.PRNGKey(15))
+        loss = eval_step_rf(model, rf, x0, _c_discrete(4), _c_continuous(4), jax.random.PRNGKey(15))
         assert jnp.isfinite(loss)
 
     def test_t_is_continuous(self):
@@ -178,10 +191,33 @@ class TestRFTrainStep:
         optimizer = optax.adam(1e-3)
         opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
         x0 = jax.random.normal(jax.random.PRNGKey(16), (4, 24))
-        c  = jnp.zeros((4, 4), dtype=jnp.int32)
-        _, _, loss = train_step_rf(model, rf, opt_state, optimizer, x0, c,
+        _, _, loss = train_step_rf(model, rf, opt_state, optimizer, x0, _c_discrete(4), _c_continuous(4),
                                    jax.random.PRNGKey(17))
         assert jnp.isfinite(loss)
+
+    def test_rf_cfg_uses_shared_null_conditioning(self, monkeypatch):
+        import src.models.rectified_flow as rf_module
+        from src.models.transformer1d import CFG_NULL_DISCRETE
+
+        observed = {}
+
+        def spy(c_discrete, c_continuous):
+            null_disc = jnp.full_like(c_discrete, CFG_NULL_DISCRETE)
+            null_cont = jnp.zeros_like(c_continuous)
+            observed["disc"] = null_disc
+            observed["cont"] = null_cont
+            return null_disc, null_cont
+
+        monkeypatch.setattr(rf_module, "make_cfg_null_conditioning", spy)
+        rf = _tiny_rf()
+        model = _tiny_model()
+        B = 2
+        x_t = jax.random.normal(jax.random.PRNGKey(18), (B, 24))
+        t_int = jnp.ones(B, dtype=jnp.int32)
+        out = rf._predict_v_cfg(model, x_t, _c_discrete(B), _c_continuous(B), t_int, guidance_scale=1.0)
+        assert out.shape == (B, 24)
+        assert jnp.all(observed["disc"] == CFG_NULL_DISCRETE)
+        assert jnp.all(observed["cont"] == 0.0)
 
 
 # ─── metrics: marginal_wasserstein + compare_models ──────────────────────────
@@ -233,6 +269,6 @@ class TestNewMetrics:
         )
 
         assert isinstance(df, pd.DataFrame)
-        assert set(['model', 'acf_l2', 'crps', 'discriminative_acc', 'wasserstein']).issubset(df.columns)
+        assert set(['model', 'acf_l2', 'crps', 'spectral_frechet', 'wasserstein']).issubset(df.columns)
         assert len(df) == 1
         assert df.iloc[0]['model'] == 'ModelA'

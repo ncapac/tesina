@@ -37,8 +37,10 @@ Last updated: 2026-06-01
 | 03b — Rectified flow training | ✅ Full GPU run recovered locally (`gpu_profile=true`, 5 800 steps, final val loss 0.7380) |
 | 03c — CVAE training | ✅ Full GPU run recovered locally (`gpu_profile=true`, 5 800 steps, final val loss 0.1466) |
 | 04 — Evaluation | ✅ Re-run on Colab GPU with fresh 03a checkpoint; outputs restored locally |
-| 05 — Comparison | ✅ Re-run on Colab GPU; outputs restored locally; scorecard/complexity plots improved |
-| README.md | ✅ Updated with final results and current roadmap |
+| 05 — Comparison | ✅ Re-run on Colab GPU; outputs restored locally; scorecard/complexity plots improved; bootstrap/skipped-condition robustness outputs added |
+| 01 — Meter-quality closure | ✅ All 24 meters retained; compact diagnostic written to `output/01/results/meter_quality_summary.csv` |
+| README.md | ✅ Updated with final results, robustness closure, meter-retention decision, and current roadmap |
+| Engineering cleanup | ✅ `_epoch_len` now fails loudly; CFG null conditioning is shared/tested; paired bootstrap helper tested |
 
 ### Final output files now present
 
@@ -46,8 +48,12 @@ Last updated: 2026-06-01
 - `output/04/results/partial_dependence_temp.csv` — temperature sweep for the largest-pool condition.
 - `output/05/results/comparison_long.csv` — 32 rows = 4 models × 8 condition groups; all finite.
 - `output/05/results/training_summary_table.csv` — compact training facts for 03a/b/c.
-- `output/05/results/model_scorecard.csv` — aggregate means, mean rank, and metric wins.
+- `output/05/results/model_scorecard.csv` — aggregate means, mean rank, metric wins, and 8/10 condition coverage.
 - `output/05/results/metric_ratio_to_historical.csv` — ratios vs historical baseline.
+- `output/05/results/bootstrap_ci_aggregate.csv` — 2 000-draw paired-condition bootstrap CIs for unweighted aggregate means.
+- `output/05/results/bootstrap_ci_aggregate_weighted_n_real.csv` — `n_real`-weighted sensitivity table.
+- `output/05/results/skipped_conditions.csv` — all possible `(cluster, day_type)` groups with included/skipped reason.
+- `output/01/results/meter_quality_summary.csv` — per-meter quality diagnostic; all 24 meters retained.
 
 ### Final scorecard (lower is better)
 
@@ -73,33 +79,34 @@ parameters than diffusion/RF.
       historical baseline comparison, and the quality-vs-parameter result.
 - [ ] Discuss why cluster 1 is omitted from 04/05 metric tables: only two
       validation examples, so metrics would be dominated by sampling noise.
+- [ ] Discuss the bootstrap CIs as uncertainty over the eight retained
+      condition groups, not as a full alternative-split robustness study.
 - [ ] Discuss the diffusion temperature partial-dependence finding: the
       synthetic daily total is much flatter than the empirical binned
       response, so continuous conditioning is weaker than desired.
 - [ ] Decide which figures/tables from 04/05 enter the final document:
-      scorecard, ratio-to-historical plot, quality-vs-size plot, diffusion
-      partial-dependence plot, and representative envelope gallery.
+      scorecard, bootstrap CI table, ratio-to-historical plot,
+      quality-vs-size plot, diffusion partial-dependence plot, and
+      representative envelope gallery.
 
-### Robustness checks (nice to have, not blocking)
-- [ ] Bootstrap confidence intervals for the 05 aggregate metrics, or
-      explicitly state that the ranking is deterministic under one
-      meter-based split and always report `n_real`.
-- [ ] Meter-split sensitivity check: rerun the evaluation with one or more
-      alternative split seeds if thesis time allows.
-- [ ] Confirm DDIM sampler null token (`[-1,-1,-1]`, zeros) is byte-for-byte
-      the same as the CFG-dropout null used in `train_step`; add a small
-      unit test if desired.
-- [ ] Inspect the 24 Rolle meters in 01_eda and document whether any need
-      exclusion. If exclusions are made, rerun 02→05.
+### Robustness / cleanup shipped 2026-06-01
+- [x] Added paired-condition bootstrap CIs for the 05 aggregate metrics.
+- [x] Added `skipped_conditions.csv` and coverage columns to `model_scorecard.csv`.
+- [x] Confirmed cluster 1 is skipped because validation support is 2 weekday
+      examples and 0 weekend examples under the seed-42 meter split.
+- [x] Inspected the 24 Rolle meters; retained all meters because each has
+      complete daily coverage, zero raw missingness, and no all-zero pattern.
+- [x] Confirmed/tracked CFG null consistency via a shared helper and unit tests.
+- [x] Made `_epoch_len(loader)` fail loudly when `epoch_len` is absent.
 
-### Engineering cleanup (optional)
+### Post-thesis engineering polish (deferred)
 - [ ] Move per-cluster training-loss diagnostics out of the inner training
       loop or default `log_cluster_losses=False` for GPU runs; the current
       implementation adds extra forward passes per batch.
-- [ ] Make `_epoch_len(loader)` fail loudly if the dataloader lacks an
-      `epoch_len` attribute instead of silently falling back to a default.
 - [ ] Save wall-clock runtime metadata in future training summaries if the
       thesis needs an efficiency comparison beyond parameter count.
+- [ ] True meter-split robustness: retrain all learned models under one or
+      more alternative meter splits before comparing metrics across splits.
 
 ### Optional extensions (post-thesis, from Lorenzo's note)
 - [ ] Generate a full year of synthetic data and compare annual consumption,

@@ -34,6 +34,8 @@ import numpy as np
 import optax
 import equinox as eqx
 
+from src.models.transformer1d import make_cfg_null_conditioning
+
 
 # ---------------------------------------------------------------------------
 # Training step (pure function, JIT-compiled)
@@ -63,8 +65,9 @@ def train_step_rf(
 
     # CFG: randomly null out conditioning
     null_mask = jax.random.bernoulli(key_cfg, p=p_uncond, shape=(B,))
-    c_disc_train = jnp.where(null_mask[:, None], jnp.full_like(c_discrete, -1), c_discrete)
-    c_cont_train = jnp.where(null_mask[:, None], jnp.zeros_like(c_continuous), c_continuous)
+    null_c_disc, null_c_cont = make_cfg_null_conditioning(c_discrete, c_continuous)
+    c_disc_train = jnp.where(null_mask[:, None], null_c_disc, c_discrete)
+    c_cont_train = jnp.where(null_mask[:, None], null_c_cont, c_continuous)
 
     # Sample continuous t ~ Uniform[0, 1]
     t = jax.random.uniform(key_t, shape=(B,), minval=0.0, maxval=1.0)
@@ -269,4 +272,13 @@ class RFTrainer:
 
 
 def _epoch_len(loader) -> int:
-    return getattr(loader, "epoch_len", 200)
+    """Return the explicit loader epoch length, failing loudly if absent."""
+    if not hasattr(loader, "epoch_len"):
+        raise AttributeError(
+            "Training loaders must expose an integer 'epoch_len' attribute. "
+            "Use src.data.dataset.numpy_dataloader(...) or set loader.epoch_len explicitly."
+        )
+    epoch_len = int(getattr(loader, "epoch_len"))
+    if epoch_len <= 0:
+        raise ValueError(f"loader.epoch_len must be positive, got {epoch_len}")
+    return epoch_len

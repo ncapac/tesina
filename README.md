@@ -20,7 +20,7 @@ power-quality + NWP dataset** (Zenodo `10.5281/zenodo.3463136`).
 | Data | Load the Rolle power + NWP dataset; daily-instance windowing aligned to calendar days; per-instance shape normalisation; meter-based train/val split | [src/data/](src/data/) |
 | Models | 1-D Transformer backbone shared by DDPM and rectified flow; conditional β-VAE; nearest-neighbour historical baseline | [src/models/](src/models/) |
 | Training | Trainers for all three learned models with cosine-with-warmup schedule, classifier-free guidance dropout, early stopping, checkpointing | [src/training/](src/training/) |
-| Evaluation | Four functional-distance metrics (ACF L2, marginal Wasserstein-1, CRPS, spectral Fréchet) and a `compare_models` driver | [src/evaluation/metrics.py](src/evaluation/metrics.py) |
+| Evaluation | Four functional-distance metrics (ACF L2, marginal Wasserstein-1, CRPS, spectral Fréchet), a `compare_models` driver, and paired-condition bootstrap CIs for aggregate metrics | [src/evaluation/metrics.py](src/evaluation/metrics.py) |
 | Notebooks | EDA → clustering → benchmark → three training notebooks → evaluation → cross-model comparison | [notebooks/](notebooks/) |
 | Tests | 60+ unit tests covering loader, dataset, models, training, metrics, runtime paths, export bundles | [tests/](tests/) |
 
@@ -94,6 +94,7 @@ The headline points to remember when reading evaluation results:
 - **One full annual cycle**: 372 days covers exactly one yearly cycle, so the season channel is informative but each (cluster, day_type, season) bucket has at most ~24 × 90 / 4 ≈ 540 instances before filtering.
 - **Hourly resolution** (not 15 min as the original brief mentions): `seq_len=24` everywhere.
 - **Per-instance shape normalisation** (rather than per-meter or per-cluster): chosen so that the same model handles low-consumption residential cabinets and high-consumption commercial ones without scale dominating the loss.
+- **Meter-quality decision**: all 24 meters are retained. [output/01/results/meter_quality_summary.csv](output/01/results/meter_quality_summary.csv) shows 372 daily instances for every meter, zero raw missingness, max zero fraction `0.0017`, and max absolute robust mean-load z-score `2.29`; no meter is structurally broken or exclusion-worthy.
 
 ---
 
@@ -166,7 +167,15 @@ provides four complementary scalar distances, plus visual diagnostics.
 A summary 4-row diagnostic figure can be produced for any
 `(real, syn)` ensemble with `run_all_metrics(real, syn, label=...)`, and
 cross-model comparison is one call to `compare_models(models_dict, real,
-conditions, c_continuous=..., n_samples=200, ...)`.
+conditions, c_continuous=..., n_samples=200, ...)`. The comparison driver
+skips condition groups with fewer than 10 real validation examples; notebook
+05 writes [output/05/results/skipped_conditions.csv](output/05/results/skipped_conditions.csv)
+so that omitted groups are visible.
+
+For aggregate uncertainty, `bootstrap_aggregate_metrics(...)` resamples
+condition groups as paired units, preserving all model rows for each sampled
+condition. Notebook 05 writes both the unweighted thesis scorecard CIs and an
+`n_real`-weighted sensitivity table.
 
 Notebook 04 also produces:
 
@@ -230,12 +239,12 @@ Notebook 05 compares historical retrieval, diffusion, rectified flow,
 and CVAE on the same validation condition groups. Lower is better for all
 four metrics.
 
-| Model | ACF L2 | Wasserstein | CRPS | Spectral Frechet | Mean rank | Metric wins |
-|-------|-------:|------------:|-----:|-----------------:|----------:|------------:|
-| CVAE | 0.2595 | 1.8883 | 5.6889 | 398.7623 | 1.0 | 4 |
-| Historical | 0.2763 | 2.0411 | 5.6916 | 626.5811 | 2.0 | 0 |
-| Diffusion | 0.3721 | 2.9079 | 5.9683 | 806.8116 | 3.0 | 0 |
-| Rectified flow | 0.3807 | 2.9187 | 5.9779 | 997.9370 | 4.0 | 0 |
+| Model | ACF L2 | Wasserstein | CRPS | Spectral Frechet | Mean rank | Metric wins | Conditions |
+|-------|-------:|------------:|-----:|-----------------:|----------:|------------:|-----------:|
+| CVAE | 0.2595 | 1.8883 | 5.6889 | 398.7623 | 1.0 | 4 | 8 / 10 |
+| Historical | 0.2763 | 2.0411 | 5.6916 | 626.5811 | 2.0 | 0 | 8 / 10 |
+| Diffusion | 0.3721 | 2.9079 | 5.9683 | 806.8116 | 3.0 | 0 | 8 / 10 |
+| Rectified flow | 0.3807 | 2.9187 | 5.9779 | 997.9370 | 4.0 | 0 | 8 / 10 |
 
 Relative to the historical baseline (`1.0 = historical`), CVAE is better
 on ACF L2 (`0.939`), Wasserstein (`0.925`), and spectral Frechet
@@ -266,6 +275,23 @@ temperature response. That is evidence that plausible-looking generated
 profiles do not necessarily imply a faithful continuous-conditioning
 response.
 
+### 7.4 Robustness closure
+
+Notebook 05 now writes bootstrap confidence intervals for the aggregate
+metrics:
+
+- [output/05/results/bootstrap_ci_aggregate.csv](output/05/results/bootstrap_ci_aggregate.csv) — unweighted, matching the thesis scorecard definition.
+- [output/05/results/bootstrap_ci_aggregate_weighted_n_real.csv](output/05/results/bootstrap_ci_aggregate_weighted_n_real.csv) — `n_real`-weighted sensitivity table.
+- [output/05/results/skipped_conditions.csv](output/05/results/skipped_conditions.csv) — exact support for all 10 possible `(cluster, day_type)` groups.
+
+The bootstrap resamples the 8 retained condition groups as paired units
+(`2 000` draws, 95 % intervals). It should be read as an uncertainty band
+over condition mix, not as a substitute for retraining on alternative meter
+splits. The point ranking remains CVAE → historical → diffusion → rectified
+flow, and the `n_real`-weighted sensitivity table still places CVAE first on
+all four aggregate means. Cluster 1 is excluded because the validation split
+contains only 2 weekday examples and 0 weekend examples for that cluster.
+
 ---
 
 ## 8. Output layout
@@ -275,6 +301,7 @@ which are small enough to track if desired):
 
 ```
 output/
+  01/results/meter_quality_summary.csv                 # meter-retention diagnostic
   03a/checkpoints/best_model.pkl                       # diffusion
        results/diffusion/training_summary.json
   03b/checkpoints/best_model.pkl                       # rectified flow
@@ -285,8 +312,11 @@ output/
        results/partial_dependence_temp.csv             # PD sweep
   05/results/comparison_long.csv                       # 4-model × N-cond table
       results/training_summary_table.csv              # compact 03a/b/c run facts
-      results/model_scorecard.csv                     # mean metrics + rank/wins
+      results/model_scorecard.csv                     # mean metrics + rank/wins + condition coverage
       results/metric_ratio_to_historical.csv          # learned models vs baseline
+      results/bootstrap_ci_aggregate.csv              # paired-condition bootstrap CIs
+      results/bootstrap_ci_aggregate_weighted_n_real.csv
+      results/skipped_conditions.csv                  # included/skipped condition support
 ```
 
 Every `training_summary.json` carries an identical schema:
@@ -402,16 +432,17 @@ See [todo.md](todo.md) for the up-to-date task list. The remaining work,
 in order, is:
 
 1. Write the final thesis discussion around the CVAE-vs-historical result,
-  the weak diffusion temperature partial dependence, and the omission of
-  cluster 1 from metric tables because of tiny validation support.
-2. Decide whether to add bootstrap confidence intervals or keep the
-  current deterministic metric tables with explicit `n_real` caveats.
-3. Make a final outlier-meter decision in 01/02 and document why no meters
-  were excluded, or rerun the downstream artefacts if exclusions are made.
-4. Record wall-clock runtimes manually if the thesis needs an efficiency
+  the weak diffusion temperature partial dependence, the bootstrap condition
+  uncertainty bands, and the omission of cluster 1 from metric tables because
+  of tiny validation support.
+2. Decide which figures/tables from 04/05 enter the final document:
+  scorecard, bootstrap CI table, ratio-to-historical plot, quality-vs-size
+  plot, diffusion partial-dependence plot, and representative envelope gallery.
+3. Record wall-clock runtimes manually only if the thesis needs an efficiency
   comparison beyond parameter count.
-5. Optional extension: generate a full synthetic year and compare annual
+4. Optional extension: generate a full synthetic year and compare annual
   consumption, frequency content, and distance to the nearest real day.
 
-The core modelling and evaluation workflow is complete; the remaining
-work is thesis writing, robustness checks, and optional extensions.
+The core modelling, evaluation, robustness checks, and lightweight
+engineering cleanup are complete; the remaining work is thesis writing and
+optional extensions.

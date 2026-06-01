@@ -83,8 +83,16 @@ def eval_step_cvae(
 
 
 def _epoch_len(loader) -> int:
-    """Get epoch length from loader (falls back to large number)."""
-    return getattr(loader, "epoch_len", 10_000)
+    """Return the explicit loader epoch length, failing loudly if absent."""
+    if not hasattr(loader, "epoch_len"):
+        raise AttributeError(
+            "Training loaders must expose an integer 'epoch_len' attribute. "
+            "Use src.data.dataset.numpy_dataloader(...) or set loader.epoch_len explicitly."
+        )
+    epoch_len = int(getattr(loader, "epoch_len"))
+    if epoch_len <= 0:
+        raise ValueError(f"loader.epoch_len must be positive, got {epoch_len}")
+    return epoch_len
 
 
 # ---------------------------------------------------------------------------

@@ -74,14 +74,27 @@ class TestDiffusionTransformer1D:
 
     def test_null_conditioning(self):
         """Null conditioning c_discrete[0] < 0 must run without error."""
+        from src.models.transformer1d import CFG_NULL_DISCRETE
+
         model = _tiny_model()
         x_t   = jax.random.normal(jax.random.PRNGKey(3), (24,))
         t     = jnp.array(0, dtype=jnp.int32)
-        c_null = jnp.array([-1, -1, -1], dtype=jnp.int32)
+        c_null = jnp.array([CFG_NULL_DISCRETE, CFG_NULL_DISCRETE, CFG_NULL_DISCRETE], dtype=jnp.int32)
         c_zero = jnp.array([0.0], dtype=jnp.float32)
         out = model(x_t, t, c_null, c_zero)
         assert out.shape == (24,)
         assert jnp.all(jnp.isfinite(out))
+
+    def test_cfg_null_helper_matches_model_null_representation(self):
+        from src.models.transformer1d import CFG_NULL_DISCRETE, make_cfg_null_conditioning
+
+        c_disc = _c_discrete(B=3, cid=2, dt=1, season=3)
+        c_cont = _c_continuous(B=3, temp=0.7)
+        null_disc, null_cont = make_cfg_null_conditioning(c_disc, c_cont)
+        assert null_disc.shape == c_disc.shape
+        assert null_cont.shape == c_cont.shape
+        assert jnp.all(null_disc == CFG_NULL_DISCRETE)
+        assert jnp.all(null_cont == 0.0)
 
     def test_output_finite(self):
         """Output must not contain NaN or Inf."""
@@ -165,6 +178,30 @@ class TestDiffusionProcess:
         )
         assert samples.shape == (B, 24)
         assert jnp.all(jnp.isfinite(samples))
+
+    def test_diffusion_cfg_uses_shared_null_conditioning(self, monkeypatch):
+        import src.models.diffusion as diffusion_module
+        from src.models.transformer1d import CFG_NULL_DISCRETE
+
+        observed = {}
+
+        def spy(c_discrete, c_continuous):
+            null_disc = jnp.full_like(c_discrete, CFG_NULL_DISCRETE)
+            null_cont = jnp.zeros_like(c_continuous)
+            observed["disc"] = null_disc
+            observed["cont"] = null_cont
+            return null_disc, null_cont
+
+        monkeypatch.setattr(diffusion_module, "make_cfg_null_conditioning", spy)
+        dp = _tiny_diffusion(T=10)
+        model = _tiny_model()
+        B = 2
+        x_t = jax.random.normal(jax.random.PRNGKey(8), (B, 24))
+        t = jnp.ones(B, dtype=jnp.int32)
+        out = dp._predict_eps_cfg(model, x_t, _c_discrete(B), _c_continuous(B), t, guidance_scale=1.0)
+        assert out.shape == (B, 24)
+        assert jnp.all(observed["disc"] == CFG_NULL_DISCRETE)
+        assert jnp.all(observed["cont"] == 0.0)
 
     def test_ddim_deterministic(self):
         """Same key + eta=0 must give identical samples."""

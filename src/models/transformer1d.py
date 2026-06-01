@@ -47,6 +47,20 @@ import equinox as eqx
 # Helpers
 # ---------------------------------------------------------------------------
 
+CFG_NULL_DISCRETE: int = -1
+
+
+def make_cfg_null_conditioning(
+    c_discrete: jax.Array,
+    c_continuous: jax.Array,
+) -> tuple[jax.Array, jax.Array]:
+    """Return the shared null conditioning used by classifier-free guidance."""
+    return (
+        jnp.full_like(c_discrete, CFG_NULL_DISCRETE),
+        jnp.zeros_like(c_continuous),
+    )
+
+
 def sinusoidal_embedding(t: jax.Array, dim: int) -> jax.Array:
     """
     Sinusoidal diffusion timestep embedding.

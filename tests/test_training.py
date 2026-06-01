@@ -20,6 +20,14 @@ def _make_model_and_diffusion():
     return model, diffusion
 
 
+def _c_discrete(batch_size):
+    return jnp.zeros((batch_size, 3), dtype=jnp.int32)
+
+
+def _c_continuous(batch_size):
+    return jnp.zeros((batch_size, 1), dtype=jnp.float32)
+
+
 class TestTrainStep:
     def test_loss_is_scalar_and_finite(self):
         from src.training.train import train_step
@@ -31,10 +39,13 @@ class TestTrainStep:
 
         B = 4
         x0 = jax.random.normal(jax.random.PRNGKey(1), (B, 24))
-        c = jnp.zeros((B, 4), dtype=jnp.int32)
+        c_discrete = _c_discrete(B)
+        c_continuous = _c_continuous(B)
         key = jax.random.PRNGKey(2)
 
-        model2, opt_state2, loss = train_step(model, diffusion, opt_state, optimizer, x0, c, key)
+        model2, opt_state2, loss = train_step(
+            model, diffusion, opt_state, optimizer, x0, c_discrete, c_continuous, key
+        )
         assert loss.shape == ()
         assert float(loss) >= 0
         assert jnp.isfinite(loss)
@@ -48,12 +59,13 @@ class TestTrainStep:
         opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
 
         x0 = jax.random.normal(jax.random.PRNGKey(3), (4, 24))
-        c = jnp.zeros((4, 4), dtype=jnp.int32)
+        c_discrete = _c_discrete(4)
+        c_continuous = _c_continuous(4)
 
         leaves_before = jax.tree_util.tree_leaves(eqx.filter(model, eqx.is_array))
 
         model2, opt_state2, loss = train_step(
-            model, diffusion, opt_state, optimizer, x0, c, jax.random.PRNGKey(4)
+            model, diffusion, opt_state, optimizer, x0, c_discrete, c_continuous, jax.random.PRNGKey(4)
         )
         leaves_after = jax.tree_util.tree_leaves(eqx.filter(model2, eqx.is_array))
 
@@ -70,10 +82,11 @@ class TestEvalStep:
 
         model, diffusion = _make_model_and_diffusion()
         x0 = jax.random.normal(jax.random.PRNGKey(5), (4, 24))
-        c = jnp.zeros((4, 4), dtype=jnp.int32)
+        c_discrete = _c_discrete(4)
+        c_continuous = _c_continuous(4)
         key = jax.random.PRNGKey(6)
 
-        loss = eval_step(model, diffusion, x0, c, key)
+        loss = eval_step(model, diffusion, x0, c_discrete, c_continuous, key)
         assert loss.shape == ()
         assert jnp.isfinite(loss)
 
@@ -89,9 +102,10 @@ class TestTrainer:
 
         N = 32
         xs = np.random.randn(N, 24).astype(np.float32)
-        cs = np.zeros((N, 4), dtype=np.int32)
-        train_loader = numpy_dataloader(xs, cs, batch_size=8, shuffle=True)
-        val_loader   = numpy_dataloader(xs, cs, batch_size=8, shuffle=False)
+        cs = np.zeros((N, 3), dtype=np.int32)
+        cc = np.zeros((N, 1), dtype=np.float32)
+        train_loader = numpy_dataloader(xs, cs, batch_size=8, c_continuous=cc, shuffle=True)
+        val_loader   = numpy_dataloader(xs, cs, batch_size=8, c_continuous=cc, shuffle=False)
 
         # epoch_len = 32 // 8 = 4 batches per epoch → fast test
         trainer.fit(
@@ -126,3 +140,29 @@ class TestTrainer:
         leaves2 = jax.tree_util.tree_leaves(eqx.filter(trainer2.model, eqx.is_array))
         for l1, l2 in zip(leaves1, leaves2):
             np.testing.assert_array_equal(np.array(l1), np.array(l2))
+
+
+class TestEpochLen:
+    def test_diffusion_epoch_len_requires_attribute(self):
+        from src.training.train import _epoch_len
+
+        with pytest.raises(AttributeError, match="epoch_len"):
+            _epoch_len(iter([]))
+
+    def test_diffusion_epoch_len_rejects_non_positive(self):
+        from src.training.train import _epoch_len
+
+        class Loader:
+            epoch_len = 0
+
+        with pytest.raises(ValueError, match="positive"):
+            _epoch_len(Loader())
+
+    def test_rf_and_cvae_epoch_len_require_attribute(self):
+        from src.training.train_rf import _epoch_len as rf_epoch_len
+        from src.training.train_cvae import _epoch_len as cvae_epoch_len
+
+        with pytest.raises(AttributeError, match="epoch_len"):
+            rf_epoch_len(iter([]))
+        with pytest.raises(AttributeError, match="epoch_len"):
+            cvae_epoch_len(iter([]))

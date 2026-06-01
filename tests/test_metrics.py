@@ -94,3 +94,53 @@ def test_compare_models_uses_empirical_full_condition_mix(monkeypatch):
     assert sampled_rows == {(0, 0, 0), (0, 0, 1)}
     assert "spectral_frechet" in summary_df.columns
     assert summary_df.loc[0, "n_empirical_meta"] == 2
+
+
+def test_bootstrap_aggregate_metrics_is_deterministic_and_ordered():
+    from src.evaluation.metrics import bootstrap_aggregate_metrics
+    import pandas as pd
+
+    rows = []
+    for condition_idx in range(4):
+        for model_name, offset in [("A", 0.0), ("B", 10.0)]:
+            rows.append({
+                "model": model_name,
+                "condition": f"c{condition_idx}",
+                "n_real": 10 + condition_idx,
+                "acf_l2": offset + condition_idx,
+                "wasserstein": offset + 2 * condition_idx,
+                "crps": offset + 3 * condition_idx,
+                "spectral_frechet": offset + 4 * condition_idx,
+            })
+    summary_df = pd.DataFrame(rows)
+
+    ci1 = bootstrap_aggregate_metrics(summary_df, n_bootstrap=50, seed=123, confidence=0.9)
+    ci2 = bootstrap_aggregate_metrics(summary_df, n_bootstrap=50, seed=123, confidence=0.9)
+
+    assert ci1.equals(ci2)
+    assert set(ci1["model"]) == {"A", "B"}
+    assert set(ci1["metric"]) == {"acf_l2", "wasserstein", "crps", "spectral_frechet"}
+    assert (ci1["n_conditions"] == 4).all()
+    assert (ci1["ci_lower"] <= ci1["mean"]).all()
+    assert (ci1["mean"] <= ci1["ci_upper"]).all()
+
+
+def test_bootstrap_aggregate_metrics_supports_weighted_means():
+    from src.evaluation.metrics import bootstrap_aggregate_metrics
+    import pandas as pd
+
+    summary_df = pd.DataFrame([
+        {"model": "A", "condition": "small", "n_real": 1, "acf_l2": 0.0},
+        {"model": "A", "condition": "large", "n_real": 9, "acf_l2": 10.0},
+    ])
+
+    unweighted = bootstrap_aggregate_metrics(
+        summary_df, n_bootstrap=10, seed=0, metric_cols=["acf_l2"]
+    )
+    weighted = bootstrap_aggregate_metrics(
+        summary_df, n_bootstrap=10, seed=0, metric_cols=["acf_l2"], weight_col="n_real"
+    )
+
+    assert unweighted.loc[0, "mean"] == 5.0
+    assert weighted.loc[0, "mean"] == 9.0
+    assert weighted.loc[0, "weight_col"] == "n_real"

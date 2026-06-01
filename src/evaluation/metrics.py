@@ -422,7 +422,7 @@ def run_all_metrics(
 
     Returns
     -------
-    dict  with keys: acf_l2, crps, discriminative_acc
+    dict  with keys: acf_l2, crps, spectral_frechet
         or (dict, fig) if return_fig=True
     """
     fig = plt.figure(figsize=figsize)
@@ -535,6 +535,10 @@ def compare_models(
 ) -> Tuple["pd.DataFrame", dict]:
     """
     Unified multi-model comparison across all (cluster × day_type) conditions.
+
+    Condition groups with fewer than 10 real validation profiles are skipped.
+    This prevents unstable distributional metrics on tiny empirical pools; all
+    models are then compared on the same retained condition groups.
 
     Parameters
     ----------
@@ -649,3 +653,137 @@ def compare_models(
     import pandas as pd
     summary_df = pd.DataFrame(rows)
     return summary_df, figs_dict
+
+
+def bootstrap_aggregate_metrics(
+    summary_df: "pd.DataFrame",
+    n_bootstrap: int = 1000,
+    seed: int = 0,
+    confidence: float = 0.95,
+    metric_cols: Optional[list[str]] = None,
+    weight_col: Optional[str] = None,
+) -> "pd.DataFrame":
+    """
+    Bootstrap aggregate model metrics over paired condition groups.
+
+    Each bootstrap draw samples condition groups with replacement and keeps all
+    model rows for each sampled condition together. This preserves the paired
+    comparison structure used by notebook 05: every model is re-aggregated over
+    the same sampled set of conditions.
+
+    Parameters
+    ----------
+    summary_df : DataFrame
+        Long comparison table from :func:`compare_models` with at least
+        ``model`` plus either ``condition`` or ``cluster``/``day_type``.
+    n_bootstrap : int
+        Number of bootstrap resamples.
+    seed : int
+        Random seed for deterministic resampling.
+    confidence : float
+        Central confidence mass, e.g. 0.95 for 2.5/97.5 percentiles.
+    metric_cols : list[str] | None
+        Metric columns to aggregate. Defaults to the standard comparison
+        metrics present in ``summary_df``.
+    weight_col : str | None
+        Optional non-negative weight column such as ``n_real``. Leave as None
+        to reproduce the unweighted scorecard definition.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: model, metric, mean, ci_lower, ci_upper, n_conditions,
+        n_bootstrap, confidence, weight_col.
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        raise ImportError("pandas required for bootstrap_aggregate_metrics")
+
+    if n_bootstrap <= 0:
+        raise ValueError(f"n_bootstrap must be positive, got {n_bootstrap}")
+    if not 0.0 < confidence < 1.0:
+        raise ValueError(f"confidence must be between 0 and 1, got {confidence}")
+    if "model" not in summary_df.columns:
+        raise ValueError("summary_df must contain a 'model' column")
+
+    standard_metrics = ["acf_l2", "wasserstein", "crps", "spectral_frechet"]
+    if metric_cols is None:
+        metric_cols = [col for col in standard_metrics if col in summary_df.columns]
+    if not metric_cols:
+        raise ValueError("No metric columns available for bootstrap aggregation")
+
+    missing_metrics = [col for col in metric_cols if col not in summary_df.columns]
+    if missing_metrics:
+        raise ValueError(f"Missing metric columns: {missing_metrics}")
+    if weight_col is not None and weight_col not in summary_df.columns:
+        raise ValueError(f"Missing weight column: {weight_col}")
+
+    df = summary_df.copy()
+    condition_col = "condition"
+    if condition_col not in df.columns:
+        if {"cluster", "day_type"}.issubset(df.columns):
+            condition_col = "__condition__"
+            df[condition_col] = list(zip(df["cluster"], df["day_type"]))
+        else:
+            raise ValueError("summary_df must contain 'condition' or both 'cluster' and 'day_type'")
+
+    agg_cols = ["model", condition_col, *metric_cols]
+    if weight_col is not None:
+        agg_cols.append(weight_col)
+    df = df[agg_cols].copy()
+    df = df.dropna(subset=metric_cols)
+    if df.empty:
+        raise ValueError("summary_df has no finite metric rows to aggregate")
+
+    models = sorted(df["model"].unique())
+    conditions = sorted(df[condition_col].unique())
+    by_condition = {
+        condition: df.loc[df[condition_col] == condition]
+        for condition in conditions
+    }
+
+    def aggregate(sampled_conditions: list) -> dict[tuple[str, str], float]:
+        sampled = pd.concat([by_condition[condition] for condition in sampled_conditions], ignore_index=True)
+        values: dict[tuple[str, str], float] = {}
+        for model_name, group in sampled.groupby("model"):
+            for metric in metric_cols:
+                if weight_col is None:
+                    values[(model_name, metric)] = float(group[metric].mean())
+                else:
+                    weights = np.asarray(group[weight_col], dtype=np.float64)
+                    if np.any(weights < 0) or not np.isfinite(weights).all() or weights.sum() <= 0:
+                        raise ValueError(f"weight_col '{weight_col}' must contain finite non-negative weights")
+                    values[(model_name, metric)] = float(np.average(group[metric], weights=weights))
+        return values
+
+    point = aggregate(conditions)
+    rng = np.random.default_rng(seed)
+    boot_values = {key: [] for key in point}
+    for _ in range(n_bootstrap):
+        sampled_conditions = rng.choice(conditions, size=len(conditions), replace=True).tolist()
+        boot = aggregate(sampled_conditions)
+        for key in boot_values:
+            boot_values[key].append(boot[key])
+
+    alpha = (1.0 - confidence) / 2.0
+    rows = []
+    for model_name in models:
+        for metric in metric_cols:
+            key = (model_name, metric)
+            if key not in point:
+                continue
+            values = np.asarray(boot_values[key], dtype=np.float64)
+            rows.append({
+                "model": model_name,
+                "metric": metric,
+                "mean": point[key],
+                "ci_lower": float(np.quantile(values, alpha)),
+                "ci_upper": float(np.quantile(values, 1.0 - alpha)),
+                "n_conditions": len(conditions),
+                "n_bootstrap": n_bootstrap,
+                "confidence": confidence,
+                "weight_col": "unweighted" if weight_col is None else weight_col,
+            })
+
+    return pd.DataFrame(rows)
