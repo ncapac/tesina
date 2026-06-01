@@ -5,12 +5,11 @@ smart-meter load profiles** with three modern generative families — DDPM,
 Rectified Flow, and Conditional β-VAE — benchmarked against a **historical
 nearest-neighbour retriever**, all in JAX + Equinox.
 
-The thesis brief (see [biblio/initial_docs/plan.txt](biblio/initial_docs/plan.txt))
-asks for a comparison of generative time-series tools on a smart-meter
-dataset with explicit attention to autocorrelation, noise-to-signal
-characteristics, and partial dependences on exogenous inputs
-(temperature). The project uses the **Rolle (Switzerland) power-quality +
-NWP dataset** (Zenodo `10.5281/zenodo.3463136`).
+The thesis asks for a comparison of generative time-series tools on a
+smart-meter dataset with explicit attention to autocorrelation,
+noise-to-signal characteristics, and partial dependences on exogenous
+inputs (temperature). The project uses the **Rolle (Switzerland)
+power-quality + NWP dataset** (Zenodo `10.5281/zenodo.3463136`).
 
 ---
 
@@ -86,7 +85,7 @@ inference time by reading the requested `log_mean_z` / `log_std_z`,
 inverting the z-score with `scale_stats.json`, and multiplying the
 generated shape by `exp(log_mean)`.
 
-### 2.4 Known dataset quirks (recorded in [biblio/todo.md](biblio/todo.md))
+### 2.4 Known dataset quirks (recorded in [todo.md](todo.md))
 
 Detailed analysis lives in [notebooks/01_eda.ipynb](notebooks/01_eda.ipynb).
 The headline points to remember when reading evaluation results:
@@ -204,7 +203,72 @@ publication-quality results when re-executed on a GPU.
 
 ---
 
-## 7. Output layout
+## 7. Final thesis results
+
+The full GPU workflow has been completed for the three learned models,
+then evaluated with notebooks 04 and 05. All three learned models used
+the same split (`7 440` train instances, `1 488` validation instances),
+the same locked conditioning schema, and `5 800` GPU-profile training
+steps.
+
+### 7.1 Training summaries
+
+| Model | Parameters | Final train loss | Final val loss | GPU profile |
+|-------|-----------:|-----------------:|---------------:|:-----------:|
+| Diffusion | 1.106 M | 0.2450 | 0.2729 | yes |
+| Rectified flow | 1.106 M | 0.6364 | 0.7380 | yes |
+| CVAE | 0.286 M | 0.1317 | 0.1466 | yes |
+
+These losses are useful convergence checks, but they are not directly
+comparable across families because DDPM/RF and CVAE optimize different
+objectives. The final ranking is therefore based on the functional
+distances below.
+
+### 7.2 Cross-model scorecard
+
+Notebook 05 compares historical retrieval, diffusion, rectified flow,
+and CVAE on the same validation condition groups. Lower is better for all
+four metrics.
+
+| Model | ACF L2 | Wasserstein | CRPS | Spectral Frechet | Mean rank | Metric wins |
+|-------|-------:|------------:|-----:|-----------------:|----------:|------------:|
+| CVAE | 0.2595 | 1.8883 | 5.6889 | 398.7623 | 1.0 | 4 |
+| Historical | 0.2763 | 2.0411 | 5.6916 | 626.5811 | 2.0 | 0 |
+| Diffusion | 0.3721 | 2.9079 | 5.9683 | 806.8116 | 3.0 | 0 |
+| Rectified flow | 0.3807 | 2.9187 | 5.9779 | 997.9370 | 4.0 | 0 |
+
+Relative to the historical baseline (`1.0 = historical`), CVAE is better
+on ACF L2 (`0.939`), Wasserstein (`0.925`), and spectral Frechet
+(`0.636`), and essentially tied on CRPS (`0.9995`). Diffusion and
+rectified flow are worse than the historical baseline on all four
+aggregate metrics in this run.
+
+**Thesis verdict:** the conditional CVAE is the strongest generator for
+this Rolle daily-load setting. It wins the aggregate functional-distance
+scorecard and does so with about one quarter of the parameters used by
+diffusion/RF. Diffusion and rectified flow remain useful references, but
+the recovered GPU results do not justify their extra complexity on this
+dataset.
+
+### 7.3 Diffusion deep dive
+
+Notebook 04 evaluates the diffusion model alone at full condition
+resolution: `26` `(cluster, day_type, season)` rows with at least `10`
+real validation profiles, each compared against `200` synthetic samples.
+Cluster 1 is intentionally absent because the validation split contains
+only two real examples for that cluster; reporting a metric there would
+be statistically fragile.
+
+The temperature partial-dependence diagnostic is important for the
+discussion: diffusion's synthetic daily total is nearly flat across the
+temperature sweep, whereas the real validation bins show a much stronger
+temperature response. That is evidence that plausible-looking generated
+profiles do not necessarily imply a faithful continuous-conditioning
+response.
+
+---
+
+## 8. Output layout
 
 All run artefacts go under `output/` (gitignored, except summary JSONs
 which are small enough to track if desired):
@@ -220,6 +284,9 @@ output/
   04/results/evaluation_metrics.csv                    # per-condition metrics
        results/partial_dependence_temp.csv             # PD sweep
   05/results/comparison_long.csv                       # 4-model × N-cond table
+      results/training_summary_table.csv              # compact 03a/b/c run facts
+      results/model_scorecard.csv                     # mean metrics + rank/wins
+      results/metric_ratio_to_historical.csv          # learned models vs baseline
 ```
 
 Every `training_summary.json` carries an identical schema:
@@ -228,18 +295,16 @@ Every `training_summary.json` carries an identical schema:
 {
   "model": "diffusion|rectified_flow|cvae",
   "parametric": true,
-  "n_train_instances": ...,
-  "n_val_instances": ...,
+  "train_instances": 7440,
+  "val_instances": 1488,
   "n_clusters": 5,
-  "gpu_profile": false,
-  "total_steps": 2000,
-  "n_epochs_cap": 3,
+  "gpu_profile": true,
+  "total_steps": 5800,
+  "n_epochs_cap": 100,
   "c_discrete":   ["cluster_id", "day_type", "season"],
   "c_continuous": ["temp_normed", "log_mean_z", "log_std_z"],
-  "n_parameters": 845000,
-  "batch_size": 64,
-  "train_losses": [...],
-  "val_losses":   [...],
+  "n_parameters": 1106274,
+  "batch_size": 128,
   "final_train_loss": ...,
   "final_val_loss":   ...,
   "random_seed": 42,
@@ -249,7 +314,7 @@ Every `training_summary.json` carries an identical schema:
 
 ---
 
-## 8. Setup
+## 9. Setup
 
 ```bash
 python -m venv .venv
@@ -270,7 +335,7 @@ versions used during development.
 
 ---
 
-## 9. Reproducing the thesis results
+## 10. Reproducing the thesis results
 
 ```bash
 source .venv/bin/activate
@@ -282,7 +347,7 @@ jupyter execute notebooks/02_clustering.ipynb
 # 2. Reference floor
 jupyter execute notebooks/03_benchmark.ipynb
 
-# 3. Train the three learned models on GPU (~2–3 h each on Colab A100)
+# 3. Train the three learned models on GPU
 TESINA_GPU=1 jupyter execute notebooks/03a_diffusion_training.ipynb
 TESINA_GPU=1 jupyter execute notebooks/03b_rectified_flow_training.ipynb
 TESINA_GPU=1 jupyter execute notebooks/03c_cvae_training.ipynb
@@ -299,7 +364,7 @@ subsample in a few minutes and write a (small) checkpoint plus
 
 ---
 
-## 10. Repository layout
+## 11. Repository layout
 
 ```
 src/
@@ -331,17 +396,22 @@ biblio/                       # Project notes, initial brief, todo
 
 ---
 
-## 11. Roadmap / open work
+## 12. Roadmap / open work
 
-See [biblio/todo.md](biblio/todo.md) for the up-to-date task list. The
-remaining work, in order, is:
+See [todo.md](todo.md) for the up-to-date task list. The remaining work,
+in order, is:
 
-1. **GPU training runs** for 03a / 03b / 03c (~2–3 h each on Colab A100).
-2. **Re-execute** 04 and 05 with the trained checkpoints; record per-cluster CRPS / ACF L2 / Wasserstein for the thesis.
-3. **Outlier-meter decision** — confirm whether any of the 24 Rolle meters need to be excluded (per-instance shape normalisation already removes scale dominance, but a few cabinets have unusually noisy or sparse traces).
-4. *Deferred:* bootstrap confidence intervals on cross-model metrics; manual wall-clock training-time recording.
-5. *Optional (Lorenzo's suggestion):* full-year synthetic generation with annual-consumption, frequency-content, and nearest-real-day-distance comparisons.
+1. Write the final thesis discussion around the CVAE-vs-historical result,
+  the weak diffusion temperature partial dependence, and the omission of
+  cluster 1 from metric tables because of tiny validation support.
+2. Decide whether to add bootstrap confidence intervals or keep the
+  current deterministic metric tables with explicit `n_real` caveats.
+3. Make a final outlier-meter decision in 01/02 and document why no meters
+  were excluded, or rerun the downstream artefacts if exclusions are made.
+4. Record wall-clock runtimes manually if the thesis needs an efficiency
+  comparison beyond parameter count.
+5. Optional extension: generate a full synthetic year and compare annual
+  consumption, frequency content, and distance to the nearest real day.
 
-The code, evaluation framework, and notebook scaffolding are all in
-place; the only blocking item is GPU compute time for the three full
-training runs.
+The core modelling and evaluation workflow is complete; the remaining
+work is thesis writing, robustness checks, and optional extensions.

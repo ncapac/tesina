@@ -1,12 +1,12 @@
 {
   "model": "RectifiedFlow + DiffusionTransformer1D",
   "parametric": true,
-  "train_instances": 823,
-  "val_instances": 177,
+  "train_instances": 7440,
+  "val_instances": 1488,
   "n_clusters": 5,
-  "gpu_profile": false,
-  "total_steps": 36,
-  "n_epochs_cap": 3,
+  "gpu_profile": true,
+  "total_steps": 5800,
+  "n_epochs_cap": 100,
   "c_discrete": [
     "cluster_id",
     "day_type",
@@ -18,9 +18,9 @@
     "log_std_z"
   ],
   "n_parameters": 1106274,
-  "batch_size": 64,
-  "final_train_loss": 1.3503787914911907,
-  "final_val_loss": 1.4356819987297058,
+  "batch_size": 128,
+  "final_train_loss": 0.6363654537447567,
+  "final_val_loss": 0.737966713309288,
   "random_seed": 42,
   "val_fraction": 0.15
 }

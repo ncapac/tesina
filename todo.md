@@ -1,6 +1,6 @@
 # Project notes & open TODOs
 
-Last updated: 2026-05-29
+Last updated: 2026-06-01
 
 ---
 
@@ -28,69 +28,82 @@ Last updated: 2026-05-29
 
 ## Current state
 
-| Notebook | Status |
-|----------|--------|
+| Notebook / artefact | Status |
+|---------------------|--------|
 | 01 — EDA | ✅ Done |
 | 02 — Clustering | ✅ Done (k=5, shape-normalised PCA → K-Means) — locks conditioning schema |
-| 03 — Benchmark (historical retrieval) | ✅ Done — val MAE 15.43 kW reference floor |
-| 03a — Diffusion training | ✅ Reworked (GPU profile + 6-channel conditioning + verbose md + summary JSON) · ⏳ GPU run pending |
-| 03b — Rectified flow training | ✅ Reworked (same structure as 03a) · ⏳ GPU run pending |
-| 03c — CVAE training | ✅ Reworked (same structure as 03a) · ⏳ GPU run pending |
-| 04 — Evaluation | ✅ Reworked: 4 functional-distance metrics, per-hour W1 heatmap, **partial dependence on temperature** · ⏳ Re-run after GPU training |
-| 05 — Comparison | ✅ Reworked: 4-way comparison (historical + diffusion + rf + cvae) via `compare_models`, failure-mode → metric-signature interpretation key · ⏳ Re-run after GPU training |
-| README.md | ✅ Rewritten (2026-05-28) — full project description, models, evaluation framework, runtime profiles, output layout, roadmap |
+| 03 — Benchmark (historical retrieval) | ✅ Done — reference floor for functional-distance metrics |
+| 03a — Diffusion training | ✅ Full GPU run recovered locally (`gpu_profile=true`, 5 800 steps, final val loss 0.2729) |
+| 03b — Rectified flow training | ✅ Full GPU run recovered locally (`gpu_profile=true`, 5 800 steps, final val loss 0.7380) |
+| 03c — CVAE training | ✅ Full GPU run recovered locally (`gpu_profile=true`, 5 800 steps, final val loss 0.1466) |
+| 04 — Evaluation | ✅ Re-run on Colab GPU with fresh 03a checkpoint; outputs restored locally |
+| 05 — Comparison | ✅ Re-run on Colab GPU; outputs restored locally; scorecard/complexity plots improved |
+| README.md | ✅ Updated with final results and current roadmap |
+
+### Final output files now present
+
+- `output/04/results/evaluation_metrics.csv` — 26 per-condition diffusion rows; all finite; `n_syn=200`.
+- `output/04/results/partial_dependence_temp.csv` — temperature sweep for the largest-pool condition.
+- `output/05/results/comparison_long.csv` — 32 rows = 4 models × 8 condition groups; all finite.
+- `output/05/results/training_summary_table.csv` — compact training facts for 03a/b/c.
+- `output/05/results/model_scorecard.csv` — aggregate means, mean rank, and metric wins.
+- `output/05/results/metric_ratio_to_historical.csv` — ratios vs historical baseline.
+
+### Final scorecard (lower is better)
+
+| Model | ACF L2 | Wasserstein | CRPS | Spectral Fréchet | Mean rank | Wins |
+|-------|-------:|------------:|-----:|-----------------:|----------:|-----:|
+| CVAE | 0.2595 | 1.8883 | 5.6889 | 398.7623 | 1.0 | 4 |
+| Historical | 0.2763 | 2.0411 | 5.6916 | 626.5811 | 2.0 | 0 |
+| Diffusion | 0.3721 | 2.9079 | 5.9683 | 806.8116 | 3.0 | 0 |
+| Rectified flow | 0.3807 | 2.9187 | 5.9779 | 997.9370 | 4.0 | 0 |
+
+**Working thesis conclusion:** CVAE is the strongest generator for the
+current Rolle daily-load experiment. It wins all four aggregate
+functional-distance metrics, is slightly better than historical retrieval
+on CRPS, clearly better on spectral structure, and uses far fewer
+parameters than diffusion/RF.
 
 ---
 
 ## Open TODOs
 
-### Verification of the 2026-05-29 fixes
-- [x] CPU smoke of 03a end-to-end with the patched train cell —
-      confirm `best_model.pkl` is written and `final_val_loss` is non-null
-- [ ] Same CPU smoke of 03b and 03c
-- [ ] Re-run 04 + 05 on the smoke checkpoints to confirm the load path
-      still works
+### Thesis writing / presentation
+- [ ] Write final results chapter around the CVAE scorecard win, the
+      historical baseline comparison, and the quality-vs-parameter result.
+- [ ] Discuss why cluster 1 is omitted from 04/05 metric tables: only two
+      validation examples, so metrics would be dominated by sampling noise.
+- [ ] Discuss the diffusion temperature partial-dependence finding: the
+      synthetic daily total is much flatter than the empirical binned
+      response, so continuous conditioning is weaker than desired.
+- [ ] Decide which figures/tables from 04/05 enter the final document:
+      scorecard, ratio-to-historical plot, quality-vs-size plot, diffusion
+      partial-dependence plot, and representative envelope gallery.
 
-### Residual ML pitfalls worth a second pass (not blocking)
-- [ ] **Per-cluster training-loss diagnostic is in the inner loop.**
-      `train.py` / `train_rf.py` call an extra `eval_step` *per cluster
-      slice in every batch*. On a 5-cluster dataset this is ~5× the
-      forward-pass cost of the actual training step. Either gate behind
-      `log_cluster_losses=False` for GPU runs, or move it to a once-per-
-      epoch sweep over a held-out batch.
-- [ ] **`_epoch_len` fallback (`200` / `10_000`) is silent.** If the
-      loader ever loses its `epoch_len` attribute (e.g. a wrapped
-      iterator) the trainer will run a wildly wrong number of steps
-      with no warning. Make it an assertion or surface a printed
-      warning.
-- [ ] **24 meters, 15 % val → ≈4 val meters.** Per-cluster val pools
-      can be empty for some `(cluster, day_type, season)` cells. Flag
-      `n_real` next to every reported metric in 04/05 and consider a
-      bootstrap-CI or meter-shuffle robustness check before publishing
-      a ranking.
-- [ ] Confirm DDIM sampler null token (`[-1,-1,-1]`, zeros) is byte-for-
-      byte the same as the CFG-dropout null used in `train_step`. (Spot
-      check; looks consistent but worth a unit test.)
+### Robustness checks (nice to have, not blocking)
+- [ ] Bootstrap confidence intervals for the 05 aggregate metrics, or
+      explicitly state that the ranking is deterministic under one
+      meter-based split and always report `n_real`.
+- [ ] Meter-split sensitivity check: rerun the evaluation with one or more
+      alternative split seeds if thesis time allows.
+- [ ] Confirm DDIM sampler null token (`[-1,-1,-1]`, zeros) is byte-for-byte
+      the same as the CFG-dropout null used in `train_step`; add a small
+      unit test if desired.
+- [ ] Inspect the 24 Rolle meters in 01_eda and document whether any need
+      exclusion. If exclusions are made, rerun 02→05.
 
-### GPU training (blocker for everything below)
-- [ ] Run 03a (diffusion) on GPU — `TESINA_GPU=1`, ~100k steps
-- [ ] Run 03b (rectified flow) on GPU — same
-- [ ] Run 03c (CVAE) on GPU — same
-- [ ] After each run: verify `output/03*/results/*/training_summary.json` is saved
-
-### Evaluation & comparison
-- [ ] Re-run `04_evaluation.ipynb` end-to-end with the trained checkpoints
-- [ ] Re-run `05_comparison.ipynb` — pivoted metrics table, per-condition envelope gallery, training-curve overlay
-- [ ] Record per-cluster CRPS, ACF L2, marginal Wasserstein, spectral Fréchet for all four models (historical + diffusion + rf + cvae)
-- [ ] Inspect partial-dependence plot in 04 §7 — does the diffusion model's daily-total response to temperature match the empirical binned response?
-- [ ] Bootstrap confidence intervals on comparison metrics *(deferred — post GPU run)*
-- [ ] Wall-clock training time comparison (record manually during GPU runs)
-
-### Data / design decisions
-- [ ] Inspect the 24 Rolle meters in 01_eda and confirm whether any need exclusion (per-instance shape normalisation already absorbs scale, but check for sparse / pathological traces)
+### Engineering cleanup (optional)
+- [ ] Move per-cluster training-loss diagnostics out of the inner training
+      loop or default `log_cluster_losses=False` for GPU runs; the current
+      implementation adds extra forward passes per batch.
+- [ ] Make `_epoch_len(loader)` fail loudly if the dataloader lacks an
+      `epoch_len` attribute instead of silently falling back to a default.
+- [ ] Save wall-clock runtime metadata in future training summaries if the
+      thesis needs an efficiency comparison beyond parameter count.
 
 ### Optional extensions (post-thesis, from Lorenzo's note)
-- [ ] Generate a full year of synthetic data and compare against real on: annual consumption, frequency content, distance-to-nearest-real-day
+- [ ] Generate a full year of synthetic data and compare annual consumption,
+      frequency content, and distance to nearest real day.
 
 ---
 
@@ -148,9 +161,9 @@ Per-cluster z-score was replaced with **per-instance shape normalisation**: `x_n
 
 ### Model architecture (03a — Diffusion)
 
-- `DiffusionTransformer1D`: seq_len=24, d_model=128, n_heads=4, n_layers=4, d_ff=256 → **~845k parameters**
+- `DiffusionTransformer1D`: seq_len=24, d_model=128, n_heads=4, n_layers=4, d_ff=256, locked `n_continuous=3` → **~1.106M parameters**
 - Discrete conditioning via AdaLN; continuous via cross-attention.
 - CFG null token: `[-1, -1, -1]` (discrete), zeros (continuous). Dropout rate `p_uncond=0.15`.
 - Inference: DDIM 50 steps, guidance scale 2.0.
 - Training: AdamW + cosine LR schedule, gradient clip 1.0, warmup 500 steps.
-- **CPU smoke test**: ~0.13 s/step after JIT warm-up; full 100k-step run requires GPU (~2–3 h on Colab A100).
+- **Training profile**: CPU smoke uses the 1 000-instance local profile; the completed GPU run used the full dataset for 5 800 derived schedule steps.
