@@ -1,0 +1,7 @@
+meter_split_seed,run_tag,robustness_run,result_dir,model,gpu_profile,train_instances,val_instances,total_steps,params_M,final_train_loss,final_val_loss,generalization_gap
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,diffusion,True,7440,1488,5800,1.106274,0.2450335691201275,0.2729120023548603,0.0278784332347327
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,rf,True,7440,1488,5800,1.106274,0.6363654537447567,0.737966713309288,0.1016012595645312
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,cvae,True,7440,1488,5800,0.286296,0.1316568150088705,0.146649108082056,0.0149922930731855
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,diffusion,True,7440,1488,5800,1.106274,0.2435481288823588,0.29593420997262,0.0523860810902611
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,rf,True,7440,1488,5800,1.106274,0.6327992657135273,0.7515435993671418,0.1187443336536144
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,cvae,True,7440,1488,5800,0.286296,0.1316525847490491,0.2066002868115902,0.074947702062541

@@ -1,0 +1,7 @@
+condition,cluster,day_type,season,n_real,evaluated,skip_reason
+c0_wke_win,0,wke,win,3,False,n_real < 10
+c0_wke_sum,0,wke,sum,4,False,n_real < 10
+c2_wkd_win,2,wkd,win,2,False,n_real < 10
+c2_wke_win,2,wke,win,1,False,n_real < 10
+c2_wke_spr,2,wke,spr,6,False,n_real < 10
+c2_wke_aut,2,wke,aut,8,False,n_real < 10

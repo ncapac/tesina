@@ -1,0 +1,9 @@
+meter_split_seed,run_tag,robustness_run,result_dir,model,acf_l2,wasserstein,crps,spectral_frechet,mean_rank,wins,n_conditions_used,n_conditions_possible
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,cvae,0.2594662439078092,1.8883384164031671,5.688894480660017,398.7622862773051,1.0,4,8,10
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,diffusion,0.3720502741634846,2.9079005107330658,5.968330293997549,806.8116401312296,3.0,0,8,10
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,historical,0.2762890066951513,2.041094743620933,5.691628917768828,626.5810869218963,2.0,0,8,10
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,rf,0.3807012289762497,2.918731384109412,5.977852519979773,997.9369543544192,4.0,0,8,10
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,cvae,0.3703558370471,1.6452642370434802,3.029056469435594,598.100438129363,1.5,2,10,10
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,diffusion,0.4862671464681625,2.020972757749644,3.1920541197900407,779.1853268182138,3.75,0,10,10
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,historical,0.3372565984725952,1.662627687294369,3.0254339677067787,672.6910675601382,1.5,2,10,10
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,rf,0.4456661254167556,1.9684127816450767,3.1697166128168552,912.4842025059525,3.25,0,10,10

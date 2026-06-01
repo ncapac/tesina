@@ -39,7 +39,8 @@ Last updated: 2026-06-01
 | 04 — Evaluation | ✅ Re-run on Colab GPU with fresh 03a checkpoint; outputs restored locally |
 | 05 — Comparison | ✅ Re-run on Colab GPU; outputs restored locally; scorecard/complexity plots improved; bootstrap/skipped-condition robustness outputs added |
 | 01 — Meter-quality closure | ✅ All 24 meters retained; compact diagnostic written to `output/01/results/meter_quality_summary.csv` |
-| README.md | ✅ Updated with final results, robustness closure, meter-retention decision, and current roadmap |
+| True meter-split robustness | 🚧 Seed005 completed in Colab/GPU runtime and compact result tables extracted locally; seed004 still pending |
+| README.md | ✅ Updated with final results, robustness closure, meter-retention decision, seed005 aggregate status, and current roadmap |
 | Engineering cleanup | ✅ `_epoch_len` now fails loudly; CFG null conditioning is shared/tested; paired bootstrap helper tested |
 
 ### Final output files now present
@@ -54,6 +55,7 @@ Last updated: 2026-06-01
 - `output/05/results/bootstrap_ci_aggregate_weighted_n_real.csv` — `n_real`-weighted sensitivity table.
 - `output/05/results/skipped_conditions.csv` — all possible `(cluster, day_type)` groups with included/skipped reason.
 - `output/01/results/meter_quality_summary.csv` — per-meter quality diagnostic; all 24 meters retained.
+- `output/robustness/results/*.csv` — split-stacked aggregate tables produced by `scripts/aggregate_split_robustness.py`; currently includes seed042 and seed005.
 
 ### Final scorecard (lower is better)
 
@@ -99,14 +101,32 @@ parameters than diffusion/RF.
 - [x] Confirmed/tracked CFG null consistency via a shared helper and unit tests.
 - [x] Made `_epoch_len(loader)` fail loudly when `epoch_len` is absent.
 
+### True meter-split robustness in progress
+- [x] Parameterize 03a/03b/03c/04/05 with `TESINA_METER_SPLIT_SEED` and `TESINA_ROBUSTNESS`.
+- [x] Keep default seed-42 outputs unchanged while routing robustness runs to `output/robustness/seedXXX/...`.
+- [x] Add seed-specific RF/CVAE transfer archives so downloaded artifacts preserve their intended output paths.
+- [x] Add `scripts/aggregate_split_robustness.py` and aggregate outputs under `output/robustness/results/`.
+- [x] Create `ROBUSTNESS.md` with method, run procedure, output layout, and results log.
+- [x] Run Colab GPU retraining/evaluation for seed 5.
+- [ ] Run Colab GPU retraining/evaluation for seed 4.
+- [ ] Optionally run Colab GPU retraining/evaluation for seed 101.
+- [x] Download/extract the completed seed005 result tables into the local repo.
+- [x] Re-run `python scripts/aggregate_split_robustness.py` after extracting seed005 results.
+- [x] Update `ROBUSTNESS.md` aggregate interpretation and thesis text from `model_rank_stability.csv` once seed005 is present locally.
+
+Seed 5 note: completed in the Colab/GPU runtime with validation meters
+`[3, 11, 18, 23]`. Notebook 05 uses all 10/10 `(cluster, day_type)` groups;
+CVAE and historical tie on mean rank (`1.50`, two metric wins each), while RF
+and diffusion trail. The compact results-only archive was extracted locally
+and aggregated with seed042; the full checkpoint archive remains at
+`/content/tesina/output/robustness/tesina_seed005_results.tar.gz` if needed.
+
 ### Post-thesis engineering polish (deferred)
 - [ ] Move per-cluster training-loss diagnostics out of the inner training
       loop or default `log_cluster_losses=False` for GPU runs; the current
       implementation adds extra forward passes per batch.
 - [ ] Save wall-clock runtime metadata in future training summaries if the
       thesis needs an efficiency comparison beyond parameter count.
-- [ ] True meter-split robustness: retrain all learned models under one or
-      more alternative meter splits before comparing metrics across splits.
 
 ### Optional extensions (post-thesis, from Lorenzo's note)
 - [ ] Generate a full year of synthetic data and compare annual consumption,

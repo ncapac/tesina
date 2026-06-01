@@ -1,0 +1,11 @@
+cluster,day_type,n_real,status,reason
+0,weekday,278,included,used in comparison_long.csv
+0,weekend,36,included,used in comparison_long.csv
+1,weekday,141,included,used in comparison_long.csv
+1,weekend,139,included,used in comparison_long.csv
+2,weekday,63,included,used in comparison_long.csv
+2,weekend,26,included,used in comparison_long.csv
+3,weekday,272,included,used in comparison_long.csv
+3,weekend,109,included,used in comparison_long.csv
+4,weekday,306,included,used in comparison_long.csv
+4,weekend,118,included,used in comparison_long.csv

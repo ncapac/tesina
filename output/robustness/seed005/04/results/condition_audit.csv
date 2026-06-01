@@ -1,0 +1,41 @@
+condition,cluster,day_type,season,n_real,evaluated,skip_reason
+c0_wkd_win,0,wkd,win,61,True,
+c0_wkd_spr,0,wkd,spr,69,True,
+c0_wkd_sum,0,wkd,sum,67,True,
+c0_wkd_aut,0,wkd,aut,81,True,
+c0_wke_win,0,wke,win,3,False,n_real < 10
+c0_wke_spr,0,wke,spr,14,True,
+c0_wke_sum,0,wke,sum,4,False,n_real < 10
+c0_wke_aut,0,wke,aut,15,True,
+c1_wkd_win,1,wkd,win,60,True,
+c1_wkd_spr,1,wkd,spr,21,True,
+c1_wkd_sum,1,wkd,sum,42,True,
+c1_wkd_aut,1,wkd,aut,18,True,
+c1_wke_win,1,wke,win,49,True,
+c1_wke_spr,1,wke,spr,27,True,
+c1_wke_sum,1,wke,sum,37,True,
+c1_wke_aut,1,wke,aut,26,True,
+c2_wkd_win,2,wkd,win,2,False,n_real < 10
+c2_wkd_spr,2,wkd,spr,24,True,
+c2_wkd_sum,2,wkd,sum,23,True,
+c2_wkd_aut,2,wkd,aut,14,True,
+c2_wke_win,2,wke,win,1,False,n_real < 10
+c2_wke_spr,2,wke,spr,6,False,n_real < 10
+c2_wke_sum,2,wke,sum,11,True,
+c2_wke_aut,2,wke,aut,8,False,n_real < 10
+c3_wkd_win,3,wkd,win,68,True,
+c3_wkd_spr,3,wkd,spr,66,True,
+c3_wkd_sum,3,wkd,sum,66,True,
+c3_wkd_aut,3,wkd,aut,72,True,
+c3_wke_win,3,wke,win,29,True,
+c3_wke_spr,3,wke,spr,26,True,
+c3_wke_sum,3,wke,sum,26,True,
+c3_wke_aut,3,wke,aut,28,True,
+c4_wkd_win,4,wkd,win,81,True,
+c4_wkd_spr,4,wkd,spr,84,True,
+c4_wkd_sum,4,wkd,sum,66,True,
+c4_wkd_aut,4,wkd,aut,75,True,
+c4_wke_win,4,wke,win,34,True,
+c4_wke_spr,4,wke,spr,31,True,
+c4_wke_sum,4,wke,sum,26,True,
+c4_wke_aut,4,wke,aut,27,True,

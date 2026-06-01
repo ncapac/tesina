@@ -1,0 +1,3 @@
+meter_split_seed,run_tag,robustness_run,result_dir
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results

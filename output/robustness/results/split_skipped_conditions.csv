@@ -1,0 +1,21 @@
+meter_split_seed,run_tag,robustness_run,result_dir,cluster,day_type,n_real,status,reason
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,0,weekday,304,included,used in comparison_long.csv
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,0,weekend,221,included,used in comparison_long.csv
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,1,weekday,2,skipped,fewer than 10 validation examples
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,1,weekend,0,skipped,fewer than 10 validation examples
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,2,weekday,272,included,used in comparison_long.csv
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,2,weekend,134,included,used in comparison_long.csv
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,3,weekday,424,included,used in comparison_long.csv
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,3,weekend,55,included,used in comparison_long.csv
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,4,weekday,58,included,used in comparison_long.csv
+42,seed042,False,/home/nicola/Desktop/Supsi/tesina/output/05/results,4,weekend,18,included,used in comparison_long.csv
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,0,weekday,278,included,used in comparison_long.csv
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,0,weekend,36,included,used in comparison_long.csv
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,1,weekday,141,included,used in comparison_long.csv
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,1,weekend,139,included,used in comparison_long.csv
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,2,weekday,63,included,used in comparison_long.csv
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,2,weekend,26,included,used in comparison_long.csv
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,3,weekday,272,included,used in comparison_long.csv
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,3,weekend,109,included,used in comparison_long.csv
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,4,weekday,306,included,used in comparison_long.csv
+5,seed005,True,/home/nicola/Desktop/Supsi/tesina/output/robustness/seed005/05/results,4,weekend,118,included,used in comparison_long.csv

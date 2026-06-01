@@ -292,6 +292,55 @@ flow, and the `n_real`-weighted sensitivity table still places CVAE first on
 all four aggregate means. Cluster 1 is excluded because the validation split
 contains only 2 weekday examples and 0 weekend examples for that cluster.
 
+### 7.5 True meter-split robustness
+
+The training, evaluation, and comparison notebooks now support true
+alternative split retraining without overwriting the seed-42 thesis
+baseline. Set `TESINA_ROBUSTNESS=1` and
+`TESINA_METER_SPLIT_SEED=<seed>` before running 03a/03b/03c/04/05;
+outputs are routed to `output/robustness/seedXXX/...`, and downstream
+notebooks load checkpoints from that same seed folder. The method, run
+log, and interpretation rules live in [ROBUSTNESS.md](ROBUSTNESS.md).
+
+Seed005 has been completed in the Colab/GPU runtime with validation
+meters `[3, 11, 18, 23]`. Its key result is a CVAE / historical tie on
+the notebook-05 mean-rank scorecard: CVAE wins Wasserstein and spectral
+Frechet, while historical retrieval wins ACF L2 and CRPS. This makes the
+robustness conclusion more nuanced than the seed-42 baseline: CVAE is
+still the best learned model, but historical retrieval remains highly
+competitive when the held-out meters change.
+
+The full seed005 runtime archive, including checkpoints, was created at:
+
+```text
+/content/tesina/output/robustness/tesina_seed005_results.tar.gz
+```
+
+Because VS Code connected to a Colab runtime could not reliably download
+the 147.8 MB checkpoint archive, notebook 05 also created a compact
+results-only transfer archive:
+
+```text
+/content/tesina_transfer/tesina_seed005_results_only.tar.gz
+```
+
+That compact archive was extracted locally on 2026-06-01. The local
+`output/robustness/results/split_run_index.csv` now contains both
+`seed042` and `seed005`, and `model_rank_stability.csv` summarizes the
+two-split stability table. Across the two locally aggregated splits, CVAE
+is the most stable winner: mean rank 1.25, first place on both splits,
+and 6 total metric wins. Historical retrieval remains close, with mean
+rank 1.75 and 2 metric wins.
+
+After each additional split is downloaded or pulled locally, run:
+
+```bash
+python scripts/aggregate_split_robustness.py
+```
+
+This writes split-stacked tables and `model_rank_stability.csv` under
+`output/robustness/results/`.
+
 ---
 
 ## 8. Output layout
@@ -317,6 +366,12 @@ output/
       results/bootstrap_ci_aggregate.csv              # paired-condition bootstrap CIs
       results/bootstrap_ci_aggregate_weighted_n_real.csv
       results/skipped_conditions.csv                  # included/skipped condition support
+  robustness/seed005/03a/results/...                  # alternative split result artifacts restored locally
+             seed005/03b/...
+             seed005/03c/...
+             seed005/04/results/...
+             seed005/05/results/...
+             results/model_rank_stability.csv         # aggregate across locally present splits
 ```
 
 Every `training_summary.json` carries an identical schema:
@@ -338,7 +393,13 @@ Every `training_summary.json` carries an identical schema:
   "final_train_loss": ...,
   "final_val_loss":   ...,
   "random_seed": 42,
-  "val_fraction": 0.15
+  "meter_split_seed": 42,
+  "val_fraction": 0.15,
+  "train_meters": [0, 1, ...],
+  "val_meters": [15, 16, 18, 19],
+  "robustness_run": false,
+  "run_tag": "seed042",
+  "output_root": ".../output"
 }
 ```
 
@@ -387,6 +448,17 @@ jupyter execute notebooks/04_evaluation.ipynb
 jupyter execute notebooks/05_comparison.ipynb
 ```
 
+For true meter-split robustness, keep the same seed in all five robustness notebooks:
+
+```bash
+TESINA_GPU=1 TESINA_ROBUSTNESS=1 TESINA_METER_SPLIT_SEED=5 jupyter execute notebooks/03a_diffusion_training.ipynb
+TESINA_GPU=1 TESINA_ROBUSTNESS=1 TESINA_METER_SPLIT_SEED=5 jupyter execute notebooks/03b_rectified_flow_training.ipynb
+TESINA_GPU=1 TESINA_ROBUSTNESS=1 TESINA_METER_SPLIT_SEED=5 jupyter execute notebooks/03c_cvae_training.ipynb
+TESINA_GPU=1 TESINA_ROBUSTNESS=1 TESINA_METER_SPLIT_SEED=5 jupyter execute notebooks/04_evaluation.ipynb
+TESINA_GPU=1 TESINA_ROBUSTNESS=1 TESINA_METER_SPLIT_SEED=5 jupyter execute notebooks/05_comparison.ipynb
+python scripts/aggregate_split_robustness.py
+```
+
 For a local CPU smoke test of any training notebook, omit `TESINA_GPU`
 (or set it to `0`) — the notebook will run end-to-end on a 1 000-instance
 subsample in a few minutes and write a (small) checkpoint plus
@@ -419,6 +491,7 @@ tests/                        # pytest, 60+ tests
 scripts/
   ingest_downloaded_bundle.py # Pull a Colab export bundle into ./output
   restore_export_bundle.py    # Restore checkpoints from a tar.gz bundle
+  aggregate_split_robustness.py # Stack seed-42 + robustness split result CSVs
 data/                         # Raw (power_data.p, nwp_data.h5) + derived (clusters.csv, daily_covariates.csv, scale_stats.json) — see §2
 output/                       # All run artefacts (see §7)
 biblio/                       # Project notes, initial brief, todo
@@ -433,16 +506,21 @@ in order, is:
 
 1. Write the final thesis discussion around the CVAE-vs-historical result,
   the weak diffusion temperature partial dependence, the bootstrap condition
-  uncertainty bands, and the omission of cluster 1 from metric tables because
-  of tiny validation support.
-2. Decide which figures/tables from 04/05 enter the final document:
+  uncertainty bands, the true meter-split robustness runs, and the omission
+  of cluster 1 from the seed-42 metric tables because of tiny validation support.
+2. Run/download seed 4 (seed 101 if time allows), then re-run
+  `python scripts/aggregate_split_robustness.py` and update
+  [ROBUSTNESS.md](ROBUSTNESS.md) from
+  `output/robustness/results/model_rank_stability.csv`.
+3. Decide which figures/tables from 04/05 enter the final document:
   scorecard, bootstrap CI table, ratio-to-historical plot, quality-vs-size
   plot, diffusion partial-dependence plot, and representative envelope gallery.
-3. Record wall-clock runtimes manually only if the thesis needs an efficiency
+4. Record wall-clock runtimes manually only if the thesis needs an efficiency
   comparison beyond parameter count.
-4. Optional extension: generate a full synthetic year and compare annual
+5. Optional extension: generate a full synthetic year and compare annual
   consumption, frequency content, and distance to the nearest real day.
 
-The core modelling, evaluation, robustness checks, and lightweight
-engineering cleanup are complete; the remaining work is thesis writing and
+The core seed-42 modelling and evaluation are complete, and seed005 is now
+present in the local split aggregate tables. The remaining experimental
+work is seed004 (plus optional seed101), followed by thesis writing and
 optional extensions.
