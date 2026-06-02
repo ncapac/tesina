@@ -462,6 +462,117 @@ def run_all_metrics(
 # Marginal Wasserstein distance (1-D, per timestep, then averaged)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Diversity metrics (novelty, coverage, intra-diversity)
+# ---------------------------------------------------------------------------
+
+def _global_epsilon(x_train: np.ndarray, subsample: int = 500, percentile: float = 25.0) -> float:
+    """
+    Compute a scale-adaptive distance threshold from the training set.
+
+    Draws ``subsample`` rows from *x_train* and returns the ``percentile``-th
+    percentile of the within-sample nearest-neighbour distances.  Using a
+    small percentile (e.g. 25) produces a tight threshold: two profiles must
+    be very similar for one to be considered a "copy" of the other.
+
+    Parameters
+    ----------
+    x_train   : (N_train, L) array in any consistent unit (e.g. Watts).
+    subsample : cap on the number of rows used for the computation to keep
+                it O(subsample²) regardless of training-set size.
+    percentile: which percentile of within-sample NND to return (0–100).
+    """
+    from scipy.spatial.distance import cdist
+
+    n = len(x_train)
+    if n < 2:
+        return 1e-6
+    rng = np.random.default_rng(0)
+    idx = rng.choice(n, size=min(subsample, n), replace=False)
+    sample = x_train[idx].astype(np.float64)
+    D = cdist(sample, sample)
+    np.fill_diagonal(D, np.inf)
+    nnd = np.min(D, axis=1)
+    return float(np.percentile(nnd, percentile))
+
+
+def novelty_score(
+    syn: np.ndarray,      # (N_syn, L)
+    x_train: np.ndarray,  # (N_train, L)
+    epsilon: float,
+) -> float:
+    """
+    Fraction of synthetic samples that are not a near-copy of any training sample.
+
+    ``novelty = mean(min_dist(syn → x_train) > epsilon)``
+
+    A value near 1 means the generator is producing genuinely new profiles;
+    near 0 means it is memorising the training set (as the historical baseline
+    always does by construction).
+
+    Parameters
+    ----------
+    syn     : (N_syn, L) synthetic profiles.
+    x_train : (N_train, L) training profiles used as the reference set.
+    epsilon : distance threshold; use :func:`_global_epsilon` for a
+              data-adaptive value.
+    """
+    from scipy.spatial.distance import cdist
+
+    D = cdist(np.asarray(syn, dtype=np.float64),
+              np.asarray(x_train, dtype=np.float64))  # (N_syn, N_train)
+    return float(np.mean(np.min(D, axis=1) > epsilon))
+
+
+def coverage_score(
+    real: np.ndarray,   # (N_real, L)
+    syn: np.ndarray,    # (N_syn,  L)
+    epsilon: float,
+) -> float:
+    """
+    Fraction of real profiles that are covered by at least one synthetic sample.
+
+    ``coverage = mean(min_dist(real → syn) < epsilon)``
+
+    Complements novelty: high coverage + high novelty means the generator
+    both covers the real distribution and produces samples beyond it.
+
+    Parameters
+    ----------
+    real    : (N_real, L) validation profiles for this condition.
+    syn     : (N_syn, L) synthetic profiles for this condition.
+    epsilon : same threshold as in :func:`novelty_score`.
+    """
+    from scipy.spatial.distance import cdist
+
+    D = cdist(np.asarray(real, dtype=np.float64),
+              np.asarray(syn, dtype=np.float64))       # (N_real, N_syn)
+    return float(np.mean(np.min(D, axis=1) < epsilon))
+
+
+def intra_diversity_score(syn: np.ndarray) -> float:
+    """
+    Mean nearest-neighbour distance within the synthetic set.
+
+    Higher values indicate a more spread-out synthetic ensemble; near zero
+    signals mode collapse (all generated samples are identical or very similar).
+    Requires no epsilon and is independent of the training or validation set.
+
+    Parameters
+    ----------
+    syn : (N_syn, L) synthetic profiles.
+    """
+    from scipy.spatial.distance import cdist
+
+    n = len(syn)
+    if n < 2:
+        return 0.0
+    D = cdist(np.asarray(syn, dtype=np.float64),
+              np.asarray(syn, dtype=np.float64))       # (N, N)
+    np.fill_diagonal(D, np.inf)
+    return float(np.mean(np.min(D, axis=1)))
+
+
 def marginal_wasserstein(
     real: np.ndarray,       # (N_real, L)
     synthetic: np.ndarray,  # (N_syn,  L)
@@ -532,6 +643,7 @@ def compare_models(
     show_figs: bool = False,
     verbose: bool = True,
     c_continuous: Optional[np.ndarray] = None,
+    train_data: Optional[np.ndarray] = None,
 ) -> Tuple["pd.DataFrame", dict]:
     """
     Unified multi-model comparison across all (cluster × day_type) conditions.
@@ -545,7 +657,7 @@ def compare_models(
     models_dict : dict mapping model name → callable with signature:
                     generate(c_batch: np.ndarray, key) -> np.ndarray (N, L)
                   where c_batch is (N, ≥2) int32 conditioning array.
-    real_data   : (N_real, L) array of normalised real windows.
+    real_data   : (N_real, L) array of real windows in Watts.
     conditions  : (N_real, ≥2) int32 conditioning vectors matching real_data rows.
                   First column = cluster_id, second = day_type.
     n_samples   : number of synthetic samples to generate per condition per model.
@@ -556,11 +668,20 @@ def compare_models(
     seed           : base random seed.
     show_figs      : if True, display a per-condition metric figure for each model.
     verbose        : print progress.
+    train_data  : (N_train, L) training profiles in Watts.  When provided,
+                  three diversity metrics are added to every row:
+                  - ``novelty``       — fraction of syn samples not near any training sample.
+                  - ``coverage``      — fraction of real val samples covered by syn.
+                  - ``intra_diversity`` — mean nearest-neighbour distance within syn.
+                  A global epsilon is computed once from *train_data* using
+                  :func:`_global_epsilon` (25th-percentile within-training NND on a
+                  500-sample draw) and reused for every condition.
 
     Returns
     -------
     summary_df : pd.DataFrame  rows = (model, cluster, day_type),
                                 cols = acf_l2, crps, spectral_frechet, wasserstein
+                                [+ novelty, coverage, intra_diversity when train_data given]
     figs_dict  : {f"{model}_{condition_label}": matplotlib.Figure}
     """
     try:
@@ -574,6 +695,15 @@ def compare_models(
             (int(c[0]), int(c[1])) for c in conditions
         })
         unique_conditions.sort()
+
+    # Pre-compute global epsilon from the full training set so the novelty /
+    # coverage threshold is consistent across all conditions and models.
+    epsilon: Optional[float] = None
+    if train_data is not None:
+        epsilon = _global_epsilon(np.asarray(train_data, dtype=np.float64))
+        if verbose:
+            print(f"[diversity] global epsilon = {epsilon:.2f}  "
+                  f"(25th-pct NND on {min(500, len(train_data))}-sample draw from train_data)")
 
     rows = []
     figs_dict = {}
@@ -616,19 +746,13 @@ def compare_models(
                 synth_cond = generate_fn(c_batch, key)          # (n_samples, L)
             synth_cond = np.array(synth_cond, dtype=np.float32)
 
-            # Metrics
+            # Fidelity metrics
             acf_l2    = acf_compare(real_cond, synth_cond)
             crps      = crps_score(real_cond, synth_cond)
             spectral  = spectral_frechet_distance(real_cond, synth_cond)
             wass      = marginal_wasserstein(real_cond, synth_cond)
 
-            if verbose:
-                print(
-                    f"spectral_fd={spectral:.3f}  crps={crps:.4f}  "
-                    f"acf_l2={acf_l2:.4f}  wass={wass:.4f}"
-                )
-
-            rows.append({
+            row: dict = {
                 "model":            model_name,
                 "cluster":          cid,
                 "day_type":         "weekday" if dt == 0 else "weekend",
@@ -640,7 +764,27 @@ def compare_models(
                 "crps":             crps,
                 "spectral_frechet": spectral,
                 "wasserstein":      wass,
-            })
+            }
+
+            # Diversity metrics (only when training reference set is available)
+            if train_data is not None and epsilon is not None:
+                nov  = novelty_score(synth_cond, train_data, epsilon)
+                cov  = coverage_score(real_cond, synth_cond, epsilon)
+                idiv = intra_diversity_score(synth_cond)
+                row["novelty"]          = nov
+                row["coverage"]         = cov
+                row["intra_diversity"]  = idiv
+
+            if verbose:
+                msg = (f"spectral_fd={spectral:.3f}  crps={crps:.4f}  "
+                       f"acf_l2={acf_l2:.4f}  wass={wass:.4f}")
+                if train_data is not None:
+                    msg += (f"  novelty={row['novelty']:.3f}  "
+                            f"coverage={row['coverage']:.3f}  "
+                            f"intra_div={row['intra_diversity']:.1f}")
+                print(msg)
+
+            rows.append(row)
 
             if show_figs:
                 scalars, fig = run_all_metrics(

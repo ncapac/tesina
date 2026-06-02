@@ -20,7 +20,7 @@ power-quality + NWP dataset** (Zenodo `10.5281/zenodo.3463136`).
 | Data | Load the Rolle power + NWP dataset; daily-instance windowing aligned to calendar days; per-instance shape normalisation; meter-based train/val split | [src/data/](src/data/) |
 | Models | 1-D Transformer backbone shared by DDPM and rectified flow; conditional β-VAE; nearest-neighbour historical baseline | [src/models/](src/models/) |
 | Training | Trainers for all three learned models with cosine-with-warmup schedule, classifier-free guidance dropout, early stopping, checkpointing | [src/training/](src/training/) |
-| Evaluation | Four functional-distance metrics (ACF L2, marginal Wasserstein-1, CRPS, spectral Fréchet), a `compare_models` driver, and paired-condition bootstrap CIs for aggregate metrics | [src/evaluation/metrics.py](src/evaluation/metrics.py) |
+| Evaluation | Functional-distance metrics (ACF L2, marginal Wasserstein-1, CRPS, spectral Fréchet), shape-space diversity metrics, a `compare_models` driver, paired-condition bootstrap CIs, and notebook-level conditioning-response diagnostics | [src/evaluation/metrics.py](src/evaluation/metrics.py) |
 | Notebooks | EDA → clustering → benchmark → three training notebooks → evaluation → cross-model comparison | [notebooks/](notebooks/) |
 | Tests | 60+ unit tests covering loader, dataset, models, training, metrics, runtime paths, export bundles | [tests/](tests/) |
 
@@ -108,8 +108,8 @@ The headline points to remember when reading evaluation results:
 | 03a | [03a_diffusion_training.ipynb](notebooks/03a_diffusion_training.ipynb) | Conditional DDPM training (Trainer, cosine LR, CFG p_uncond=0.15, DDIM-50 inference) |
 | 03b | [03b_rectified_flow_training.ipynb](notebooks/03b_rectified_flow_training.ipynb) | Rectified-flow training (linear path, velocity loss, Euler sampler) |
 | 03c | [03c_cvae_training.ipynb](notebooks/03c_cvae_training.ipynb) | Conditional β-VAE training (β-ELBO with separate recon/KL logging) |
-| 04 | [04_evaluation.ipynb](notebooks/04_evaluation.ipynb) | Single-model deep dive (diffusion): per-condition functional distances, per-hour W1 heatmap, **partial dependence on temperature**, visual diagnostic |
-| 05 | [05_comparison.ipynb](notebooks/05_comparison.ipynb) | Cross-model comparison: all 4 generators × every condition with ≥10 val instances; failure-mode→metric-signature interpretation key |
+| 04 | [04_evaluation.ipynb](notebooks/04_evaluation.ipynb) | Evaluation deep dive: per-condition functional distances, per-hour W1 heatmap, and **one temperature-dependence plot per learned model** |
+| 05 | [05_comparison.ipynb](notebooks/05_comparison.ipynb) | Cross-model comparison: fidelity + diversity + temperature-response scorecards for every condition with ≥10 val instances |
 
 All training notebooks share an identical structure (§1 data → §2 split →
 §3 model → §4 trainer → §5 fit → §6 curves → §7 sanity panel →
@@ -150,7 +150,7 @@ All training notebooks share an identical structure (§1 data → §2 split →
 
 ---
 
-## 5. Evaluation framework — functional distance
+## 5. Evaluation framework — fidelity, diversity, and conditioning
 
 Generating daily load profiles is fundamentally a problem of comparing
 **distributions of curves in $\mathbb{R}^{24}$**, not scalar errors. The
@@ -172,6 +172,14 @@ skips condition groups with fewer than 10 real validation examples; notebook
 05 writes [output/05/results/skipped_conditions.csv](output/05/results/skipped_conditions.csv)
 so that omitted groups are visible.
 
+Notebook 05 also reports three shape-space diversity metrics:
+
+- `novelty`: fraction of generated profiles farther than an empirical epsilon from every training profile;
+- `coverage`: fraction of real validation profiles covered by generated profiles within that epsilon;
+- `intra_diversity`: mean nearest-neighbour distance inside the generated ensemble.
+
+These are computed in shape-normalised space so historical retrieval is correctly treated as non-novel even when profiles are rescaled back to Watts.
+
 For aggregate uncertainty, `bootstrap_aggregate_metrics(...)` resamples
 condition groups as paired units, preserving all model rows for each sampled
 condition. Notebook 05 writes both the unweighted thesis scorecard CIs and an
@@ -180,7 +188,8 @@ condition. Notebook 05 writes both the unweighted thesis scorecard CIs and an
 Notebook 04 also produces:
 
 - A **per-hour Wasserstein heatmap** (`24 × n_conditions`) — diagnoses *when* during the day the model deviates from real.
-- A **partial-dependence sweep** in temperature — for the largest-pool condition, holds discrete channels + `log_mean/std_z` fixed and sweeps `temp_normed` across empirical quantiles, then overlays synthetic vs real-bin mean profiles and a scatter of daily totals. This addresses the "partial dependences" requirement from the original thesis brief.
+- A **partial-dependence sweep** in temperature — for the largest-pool condition, holds discrete channels + `log_mean/std_z` fixed and sweeps `temp_normed` across empirical quantiles, then overlays synthetic vs real-bin mean profiles and a scatter of daily totals.
+- One **temperature-dependence plot per learned model** and `temperature_response_metrics.csv`, which compares generated daily-total slope against the empirical real-bin slope. This is a conditioning metric rather than another profile-distance metric.
 
 ---
 
@@ -230,21 +239,22 @@ steps.
 
 These losses are useful convergence checks, but they are not directly
 comparable across families because DDPM/RF and CVAE optimize different
-objectives. The final ranking is therefore based on the functional
-distances below.
+objectives. The final ranking is therefore based on fidelity, diversity,
+and conditioning-response diagnostics.
 
 ### 7.2 Cross-model scorecard
 
 Notebook 05 compares historical retrieval, diffusion, rectified flow,
-and CVAE on the same validation condition groups. Lower is better for all
-four metrics.
+and CVAE on the same validation condition groups. Lower is better for
+the four fidelity metrics; higher is better for novelty, coverage, and
+intra-diversity.
 
-| Model | ACF L2 | Wasserstein | CRPS | Spectral Frechet | Mean rank | Metric wins | Conditions |
-|-------|-------:|------------:|-----:|-----------------:|----------:|------------:|-----------:|
-| CVAE | 0.2595 | 1.8883 | 5.6889 | 398.7623 | 1.0 | 4 | 8 / 10 |
-| Historical | 0.2763 | 2.0411 | 5.6916 | 626.5811 | 2.0 | 0 | 8 / 10 |
-| Diffusion | 0.3721 | 2.9079 | 5.9683 | 806.8116 | 3.0 | 0 | 8 / 10 |
-| Rectified flow | 0.3807 | 2.9187 | 5.9779 | 997.9370 | 4.0 | 0 | 8 / 10 |
+| Model | ACF L2 | Wasserstein | CRPS | Spectral Frechet | Novelty | Coverage | Intra-div. | Mean rank | Wins | Conditions |
+|-------|-------:|------------:|-----:|-----------------:|--------:|---------:|-----------:|----------:|-----:|-----------:|
+| CVAE | 0.2595 | 1.8883 | 5.6889 | 398.7623 | 0.5950 | 0.2596 | 1.3585 | 1.5714 | 5 | 8 / 10 |
+| Diffusion | 0.3721 | 2.9079 | 5.9683 | 806.8116 | 0.7206 | 0.1621 | 1.4120 | 2.4286 | 1 | 8 / 10 |
+| Historical | 0.2763 | 2.0411 | 5.6916 | 626.5811 | 0.0000 | 0.1037 | 1.1610 | 2.7143 | 0 | 8 / 10 |
+| Rectified flow | 0.3807 | 2.9187 | 5.9779 | 997.9370 | 0.7181 | 0.1028 | 1.4294 | 3.2857 | 1 | 8 / 10 |
 
 Relative to the historical baseline (`1.0 = historical`), CVAE is better
 on ACF L2 (`0.939`), Wasserstein (`0.925`), and spectral Frechet
@@ -253,27 +263,34 @@ rectified flow are worse than the historical baseline on all four
 aggregate metrics in this run.
 
 **Thesis verdict:** the conditional CVAE is the strongest generator for
-this Rolle daily-load setting. It wins the aggregate functional-distance
-scorecard and does so with about one quarter of the parameters used by
-diffusion/RF. Diffusion and rectified flow remain useful references, but
-the recovered GPU results do not justify their extra complexity on this
-dataset.
+this Rolle daily-load setting. It wins the aggregate scorecard once both
+fidelity and diversity are included, and does so with about one quarter
+of the parameters used by diffusion/RF. Diffusion and rectified flow are
+more novel than CVAE, but their worse fidelity and lower coverage do not
+justify their extra complexity on this dataset.
 
-### 7.3 Diffusion deep dive
+### 7.3 Temperature-dependence deep dive
 
-Notebook 04 evaluates the diffusion model alone at full condition
-resolution: `26` `(cluster, day_type, season)` rows with at least `10`
-real validation profiles, each compared against `200` synthetic samples.
-Cluster 1 is intentionally absent because the validation split contains
-only two real examples for that cluster; reporting a metric there would
-be statistically fragile.
+Notebook 04 evaluates all learned models at full condition resolution
+and then runs a temperature partial-dependence sweep for the largest-
+support condition. Cluster 1 is intentionally absent from the condition
+metrics because the validation split contains only two real examples for
+that cluster; reporting a metric there would be statistically fragile.
 
 The temperature partial-dependence diagnostic is important for the
-discussion: diffusion's synthetic daily total is nearly flat across the
-temperature sweep, whereas the real validation bins show a much stronger
-temperature response. That is evidence that plausible-looking generated
-profiles do not necessarily imply a faithful continuous-conditioning
-response.
+discussion: the real validation bins show a daily-total slope of about
+`-171 Wh` per normalized-temperature unit, while the learned models are
+nearly flat (`diffusion ≈ +1.6`, `rectified flow ≈ -4.1`, `CVAE ≈ 0.0`).
+That is evidence that plausible-looking generated profiles do not
+necessarily imply faithful continuous-conditioning response.
+
+The likely cause is the current conditioning design. The models train on
+shape-normalised profiles, then recover Watts from `log_mean_z` and
+`log_std_z`; the partial-dependence sweep holds those scale channels
+fixed. Together with `season` and `cluster_id`, this gives the networks
+stronger alternatives to daily mean temperature. Future runs should test
+max/min predicted temperature, heating/cooling degree days, temperature
+range, lagged temperature, or a 24-hour forecast-temperature sequence.
 
 ### 7.4 Robustness closure
 
@@ -357,11 +374,17 @@ output/
        results/rectified_flow/training_summary.json
   03c/checkpoints/best_model.pkl                       # cvae
        results/cvae/training_summary.json
-  04/results/evaluation_metrics.csv                    # per-condition metrics
-       results/partial_dependence_temp.csv             # PD sweep
+    04/results/evaluation_metrics.csv                    # per-condition metrics
+      results/partial_dependence_temp.csv             # diffusion PD sweep
+      results/partial_dependence_temp_multimodel.csv  # learned-model PD sweep table
+      results/temperature_response_metrics.csv        # slope/range conditioning-response metric
+      results/figures/temperature_dependence_*.png    # one temperature-dependence plot per learned model
   05/results/comparison_long.csv                       # 4-model × N-cond table
       results/training_summary_table.csv              # compact 03a/b/c run facts
       results/model_scorecard.csv                     # mean metrics + rank/wins + condition coverage
+     results/model_scorecard_with_temperature_response.csv
+                         # learned-model scorecard incl. temperature response
+     results/temperature_response_scorecard.csv       # 04-derived conditioning metric used by 05
       results/metric_ratio_to_historical.csv          # learned models vs baseline
       results/bootstrap_ci_aggregate.csv              # paired-condition bootstrap CIs
       results/bootstrap_ci_aggregate_weighted_n_real.csv

@@ -15,7 +15,7 @@ The seed-42 split remains the thesis baseline. Alternative splits are not allowe
 - Conditioning schema: unchanged and locked to:
   - `c_discrete = [cluster_id, day_type, season]`
   - `c_continuous = [temp_normed, log_mean_z, log_std_z]`
-- Metrics: same four functional distances as the main comparison: ACF L2, marginal Wasserstein, CRPS, spectral Frechet.
+- Metrics: same main comparison families as the baseline: four functional distances (ACF L2, marginal Wasserstein, CRPS, spectral Frechet), shape-space diversity metrics (novelty, coverage, intra-diversity), and the notebook-04 temperature-response diagnostic when available.
 - Condition coverage: notebook 05 keeps the same rule of skipping `(cluster, day_type)` groups with fewer than 10 real validation profiles, and writes `skipped_conditions.csv` for every split.
 
 Recommended alternative meter split seeds:
@@ -48,10 +48,14 @@ output/robustness/seed005/03c/checkpoints/best_model.pkl
 output/robustness/seed005/03c/results/cvae/training_summary.json
 output/robustness/seed005/04/results/evaluation_metrics.csv
 output/robustness/seed005/04/results/partial_dependence_temp.csv
+output/robustness/seed005/04/results/partial_dependence_temp_multimodel.csv
+output/robustness/seed005/04/results/temperature_response_metrics.csv
 output/robustness/seed005/04/results/condition_audit.csv
 output/robustness/seed005/04/results/skipped_conditions.csv
 output/robustness/seed005/05/results/comparison_long.csv
 output/robustness/seed005/05/results/model_scorecard.csv
+output/robustness/seed005/05/results/model_scorecard_with_temperature_response.csv
+output/robustness/seed005/05/results/temperature_response_scorecard.csv
 output/robustness/seed005/05/results/bootstrap_ci_aggregate.csv
 output/robustness/seed005/05/results/bootstrap_ci_aggregate_weighted_n_real.csv
 ```
@@ -115,6 +119,8 @@ The aggregation script writes one split-stacked CSV per result type:
 - `split_bootstrap_ci_aggregate.csv`
 - `split_bootstrap_ci_aggregate_weighted_n_real.csv`
 - `split_skipped_conditions.csv`
+- `split_temperature_response_scorecard.csv` when split notebooks write it
+- `split_model_scorecard_with_temperature_response.csv` when split notebooks write it
 - `model_rank_stability.csv`
 
 Every row receives:

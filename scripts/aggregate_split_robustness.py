@@ -18,7 +18,9 @@ import pandas as pd
 RESULT_FILES = {
     "comparison_long": "comparison_long.csv",
     "model_scorecard": "model_scorecard.csv",
+    "model_scorecard_with_temperature_response": "model_scorecard_with_temperature_response.csv",
     "metric_ratio_to_historical": "metric_ratio_to_historical.csv",
+    "temperature_response_scorecard": "temperature_response_scorecard.csv",
     "training_summary_table": "training_summary_table.csv",
     "bootstrap_ci_aggregate": "bootstrap_ci_aggregate.csv",
     "bootstrap_ci_aggregate_weighted_n_real": "bootstrap_ci_aggregate_weighted_n_real.csv",
@@ -104,7 +106,10 @@ def aggregate(output_dir: Path) -> dict[str, Path]:
 
     scorecard = collected.get("model_scorecard")
     if scorecard is not None and not scorecard.empty:
-        metrics = ["acf_l2", "wasserstein", "crps", "spectral_frechet"]
+        metrics = [
+            "acf_l2", "wasserstein", "crps", "spectral_frechet",
+            "novelty", "coverage", "intra_diversity",
+        ]
         available_metrics = [metric for metric in metrics if metric in scorecard.columns]
         per_split_winners = (
             scorecard.loc[scorecard.groupby("run_tag")["mean_rank"].idxmin(), ["run_tag", "model"]]
