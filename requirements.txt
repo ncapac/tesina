@@ -3,6 +3,7 @@ jax[cuda12]; sys_platform == "linux"
 jax; sys_platform != "linux"
 jaxlib
 equinox>=0.11
+flax>=0.10
 optax>=0.2
 
 # Data / numerics
