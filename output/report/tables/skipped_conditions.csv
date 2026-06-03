@@ -1,0 +1,11 @@
+cluster,day_type,n_real,status,reason
+0,weekday,304,included,used in comparison_long.csv
+0,weekend,221,included,used in comparison_long.csv
+1,weekday,2,skipped,fewer than 10 validation examples
+1,weekend,0,skipped,fewer than 10 validation examples
+2,weekday,272,included,used in comparison_long.csv
+2,weekend,134,included,used in comparison_long.csv
+3,weekday,424,included,used in comparison_long.csv
+3,weekend,55,included,used in comparison_long.csv
+4,weekday,58,included,used in comparison_long.csv
+4,weekend,18,included,used in comparison_long.csv
